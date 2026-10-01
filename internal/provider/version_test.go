@@ -219,6 +219,14 @@ func TestResolveInstalledVersion(t *testing.T) {
 		}
 	})
 
+	t.Run("unknown config version returns error", func(t *testing.T) {
+		t.Setenv("CASDOOR_INSTALLED_VERSION", "4.12.0")
+		_, err := resolveInstalledVersion(types.StringUnknown())
+		if err == nil {
+			t.Fatal("expected error when config version is unknown, got nil")
+		}
+	})
+
 	t.Run("missing both config and env returns error", func(t *testing.T) {
 		t.Setenv("CASDOOR_INSTALLED_VERSION", "")
 		t.Setenv("INSTALLED_VERSION", "4.12.0") // Other env vars must NOT be used

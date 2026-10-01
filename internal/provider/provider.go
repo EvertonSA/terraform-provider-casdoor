@@ -278,6 +278,9 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 // resolveInstalledVersion returns the explicit version from config or CASDOOR_INSTALLED_VERSION env var.
 func resolveInstalledVersion(configVersion types.String) (string, error) {
+	if configVersion.IsUnknown() {
+		return "", fmt.Errorf("the Casdoor server version cannot be unknown at provider configuration time")
+	}
 	v := configVersion.ValueString()
 	if v == "" {
 		v = os.Getenv("CASDOOR_INSTALLED_VERSION")

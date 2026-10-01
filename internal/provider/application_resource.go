@@ -1973,15 +1973,8 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 
 	if r.isV4() {
 		appId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
-		postResp, err := updateWithServerMerge(r.client, "get-application", "update-application", appId, app, nil)
-		if err != nil || (postResp != nil && postResp.Status != "ok") {
-			msg := "unknown error"
-			if err != nil {
-				msg = err.Error()
-			} else if postResp != nil && postResp.Msg != "" {
-				msg = postResp.Msg
-			}
-			resp.Diagnostics.AddError("Error Updating Application", fmt.Sprintf("Could not update application %q: %s", plan.Name.ValueString(), msg))
+		if err := updateWithServerMerge(r.client, "get-application", "update-application", appId, app, nil); err != nil {
+			resp.Diagnostics.AddError("Error Updating Application", fmt.Sprintf("Could not update application %q: %s", plan.Name.ValueString(), err))
 			return
 		}
 
@@ -1989,7 +1982,7 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 		plan.CreatedTime = state.CreatedTime
 		plan.ClientID = state.ClientID
 		plan.ClientSecret = state.ClientSecret
-		if updatedApp, err := r.client.GetApplication(plan.Name.ValueString()); err == nil && updatedApp != nil && updatedApp.CertPublicKey != "" {
+		if updatedApp, err := r.client.GetApplication(appId); err == nil && updatedApp != nil && updatedApp.CertPublicKey != "" {
 			plan.CertPublicKey = types.StringValue(updatedApp.CertPublicKey)
 		} else {
 			plan.CertPublicKey = state.CertPublicKey

@@ -50,6 +50,42 @@ func getProviderClient(providerData any, diags *diag.Diagnostics) (*casdoorsdk.C
 	}
 }
 
+// postWithExtraFields serializes planObj, overlays extraFields, and executes an action (e.g. add-organization).
+func postWithExtraFields(
+	client *casdoorsdk.Client,
+	action string,
+	id string,
+	planObj any,
+	extraFields map[string]any,
+) error {
+	planBytes, err := json.Marshal(planObj)
+	if err != nil {
+		return fmt.Errorf("failed to marshal plan object: %w", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(planBytes, &payload); err != nil {
+		return fmt.Errorf("failed to unmarshal plan map: %w", err)
+	}
+
+	for k, v := range extraFields {
+		payload[k] = v
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	resp, err := client.DoPost(action, map[string]string{"id": id}, bodyBytes, false, false)
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.Status != "ok" {
+		return fmt.Errorf("%s", resp.Msg)
+	}
+	return nil
+}
+
 // updateWithServerMerge fetches the existing server object, overlays the plan object and any extra fields,
 // then posts the update. This prevents unmodeled server fields from being wiped out on Casdoor 4.x.
 func updateWithServerMerge(
@@ -59,20 +95,26 @@ func updateWithServerMerge(
 	id string,
 	planObj any,
 	extraFields map[string]any,
-) (*casdoorsdk.Response, error) {
+) error {
 	serverObj := make(map[string]any)
 	rawUrl := client.GetUrl(getAction, map[string]string{"id": id})
-	if rawBytes, err := client.DoGetBytes(rawUrl); err == nil && len(rawBytes) > 0 {
-		_ = json.Unmarshal(rawBytes, &serverObj)
+	rawBytes, err := client.DoGetBytes(rawUrl)
+	if err != nil {
+		return fmt.Errorf("failed to fetch existing object for %q: %w", id, err)
+	}
+	if len(rawBytes) > 0 {
+		if err := json.Unmarshal(rawBytes, &serverObj); err != nil {
+			return fmt.Errorf("failed to decode existing object for %q: %w", id, err)
+		}
 	}
 
 	planBytes, err := json.Marshal(planObj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal plan object: %w", err)
+		return fmt.Errorf("failed to marshal plan object: %w", err)
 	}
 	var planMap map[string]any
 	if err := json.Unmarshal(planBytes, &planMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal plan map: %w", err)
+		return fmt.Errorf("failed to unmarshal plan map: %w", err)
 	}
 
 	for k, v := range planMap {
@@ -84,10 +126,17 @@ func updateWithServerMerge(
 
 	mergedBytes, err := json.Marshal(serverObj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal merged payload: %w", err)
+		return fmt.Errorf("failed to marshal merged payload: %w", err)
 	}
 
-	return client.DoPost(updateAction, map[string]string{"id": id}, mergedBytes, false, false)
+	resp, err := client.DoPost(updateAction, map[string]string{"id": id}, mergedBytes, false, false)
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.Status != "ok" {
+		return fmt.Errorf("%s", resp.Msg)
+	}
+	return nil
 }
 
 // sdkError checks the (bool, error) result from Casdoor SDK calls and adds

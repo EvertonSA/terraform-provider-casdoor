@@ -168,3 +168,62 @@ resource "casdoor_organization" "test" {
 }
 `, name, displayName)
 }
+
+func TestAccOrganizationResource_v4Attributes(t *testing.T) {
+	config := setupTestConfig(t)
+	rName := "tf-test-" + acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum)
+	resourceName := "casdoor_organization.test"
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories(config),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccProviderConfig(config) + fmt.Sprintf(`
+resource "casdoor_organization" "test" {
+  name                    = %q
+  display_name            = "Test Organization V4"
+  password_history_count  = 5
+  disable_console         = true
+  enable_exclusive_signin = true
+  max_sessions            = 3
+  default_token_fields    = ["name", "email"]
+  use_permanent_avatar    = true
+}
+`, rName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "name", rName),
+					resource.TestCheckResourceAttr(resourceName, "password_history_count", "5"),
+					resource.TestCheckResourceAttr(resourceName, "disable_console", "true"),
+					resource.TestCheckResourceAttr(resourceName, "enable_exclusive_signin", "true"),
+					resource.TestCheckResourceAttr(resourceName, "max_sessions", "3"),
+					resource.TestCheckResourceAttr(resourceName, "default_token_fields.#", "2"),
+					resource.TestCheckResourceAttr(resourceName, "use_permanent_avatar", "true"),
+				),
+			},
+			{
+				Config: testAccProviderConfig(config) + fmt.Sprintf(`
+resource "casdoor_organization" "test" {
+  name                    = %q
+  display_name            = "Test Organization V4 Updated"
+  password_history_count  = 10
+  disable_console         = false
+  enable_exclusive_signin = false
+  max_sessions            = 5
+  default_token_fields    = ["name"]
+  use_permanent_avatar    = false
+}
+`, rName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "name", rName),
+					resource.TestCheckResourceAttr(resourceName, "display_name", "Test Organization V4 Updated"),
+					resource.TestCheckResourceAttr(resourceName, "password_history_count", "10"),
+					resource.TestCheckResourceAttr(resourceName, "disable_console", "false"),
+					resource.TestCheckResourceAttr(resourceName, "enable_exclusive_signin", "false"),
+					resource.TestCheckResourceAttr(resourceName, "max_sessions", "5"),
+					resource.TestCheckResourceAttr(resourceName, "default_token_fields.#", "1"),
+					resource.TestCheckResourceAttr(resourceName, "use_permanent_avatar", "false"),
+				),
+			},
+		},
+	})
+}

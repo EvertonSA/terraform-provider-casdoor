@@ -829,6 +829,30 @@ func (r *OrganizationResource) populateV4FieldsFromRaw(ctx context.Context, orgI
 	}
 }
 
+func extractV4OrganizationFields(ctx context.Context, plan OrganizationResourceModel) map[string]any {
+	extraFields := make(map[string]any)
+	if !plan.PasswordHistoryCount.IsNull() && !plan.PasswordHistoryCount.IsUnknown() {
+		extraFields["passwordHistoryCount"] = plan.PasswordHistoryCount.ValueInt64()
+	}
+	if !plan.DisableConsole.IsNull() && !plan.DisableConsole.IsUnknown() {
+		extraFields["disableConsole"] = plan.DisableConsole.ValueBool()
+	}
+	if !plan.EnableExclusiveSignin.IsNull() && !plan.EnableExclusiveSignin.IsUnknown() {
+		extraFields["enableExclusiveSignin"] = plan.EnableExclusiveSignin.ValueBool()
+	}
+	if !plan.MaxSessions.IsNull() && !plan.MaxSessions.IsUnknown() {
+		extraFields["maxSessions"] = plan.MaxSessions.ValueInt64()
+	}
+	if !plan.DefaultTokenFields.IsNull() && !plan.DefaultTokenFields.IsUnknown() {
+		var tokenFields []string
+		_ = plan.DefaultTokenFields.ElementsAs(ctx, &tokenFields, false)
+		extraFields["defaultTokenFields"] = tokenFields
+	} else if plan.DefaultTokenFields.IsNull() {
+		extraFields["defaultTokenFields"] = []string{}
+	}
+	return extraFields
+}
+
 func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan OrganizationResourceModel
 
@@ -853,13 +877,22 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	ok, err := r.client.AddOrganization(org)
-	if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("creating organization %q", plan.Name.ValueString())) {
-		return
+	orgId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
+	if r.isV4() {
+		extraFields := extractV4OrganizationFields(ctx, plan)
+		if err := postWithExtraFields(r.client, "add-organization", orgId, org, extraFields); err != nil {
+			resp.Diagnostics.AddError("Error Creating Organization", fmt.Sprintf("Could not create organization %q: %s", plan.Name.ValueString(), err))
+			return
+		}
+	} else {
+		ok, err := r.client.AddOrganization(org)
+		if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("creating organization %q", plan.Name.ValueString())) {
+			return
+		}
 	}
 
 	// Read back the organization to get server-generated values like CreatedTime.
-	createdOrg, err := r.client.GetOrganization(plan.Owner.ValueString() + "/" + plan.Name.ValueString())
+	createdOrg, err := r.client.GetOrganization(orgId)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Reading Organization",
@@ -1102,34 +1135,9 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 			return
 		}
 
-		extraFields := make(map[string]any)
-		if !plan.PasswordHistoryCount.IsNull() && !plan.PasswordHistoryCount.IsUnknown() {
-			extraFields["passwordHistoryCount"] = plan.PasswordHistoryCount.ValueInt64()
-		}
-		if !plan.DisableConsole.IsNull() && !plan.DisableConsole.IsUnknown() {
-			extraFields["disableConsole"] = plan.DisableConsole.ValueBool()
-		}
-		if !plan.EnableExclusiveSignin.IsNull() && !plan.EnableExclusiveSignin.IsUnknown() {
-			extraFields["enableExclusiveSignin"] = plan.EnableExclusiveSignin.ValueBool()
-		}
-		if !plan.MaxSessions.IsNull() && !plan.MaxSessions.IsUnknown() {
-			extraFields["maxSessions"] = plan.MaxSessions.ValueInt64()
-		}
-		if !plan.DefaultTokenFields.IsNull() && !plan.DefaultTokenFields.IsUnknown() {
-			var tokenFields []string
-			_ = plan.DefaultTokenFields.ElementsAs(ctx, &tokenFields, false)
-			extraFields["defaultTokenFields"] = tokenFields
-		}
-
-		postResp, err := updateWithServerMerge(r.client, "get-organization", "update-organization", orgId, org, extraFields)
-		if err != nil || (postResp != nil && postResp.Status != "ok") {
-			msg := "unknown error"
-			if err != nil {
-				msg = err.Error()
-			} else if postResp != nil && postResp.Msg != "" {
-				msg = postResp.Msg
-			}
-			resp.Diagnostics.AddError("Error Updating Organization", fmt.Sprintf("Could not update organization %q: %s", plan.Name.ValueString(), msg))
+		extraFields := extractV4OrganizationFields(ctx, plan)
+		if err := updateWithServerMerge(r.client, "get-organization", "update-organization", orgId, org, extraFields); err != nil {
+			resp.Diagnostics.AddError("Error Updating Organization", fmt.Sprintf("Could not update organization %q: %s", plan.Name.ValueString(), err))
 			return
 		}
 

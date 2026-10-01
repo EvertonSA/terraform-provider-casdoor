@@ -195,3 +195,37 @@ func TestVersionParsingAndValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveInstalledVersion(t *testing.T) {
+	t.Run("explicit in config takes precedence", func(t *testing.T) {
+		t.Setenv("CASDOOR_INSTALLED_VERSION", "3.153.0")
+		got, err := resolveInstalledVersion(types.StringValue("4.12.0"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "4.12.0" {
+			t.Errorf("got %q, want 4.12.0", got)
+		}
+	})
+
+	t.Run("fallback to CASDOOR_INSTALLED_VERSION", func(t *testing.T) {
+		t.Setenv("CASDOOR_INSTALLED_VERSION", "4.12.0")
+		got, err := resolveInstalledVersion(types.StringNull())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "4.12.0" {
+			t.Errorf("got %q, want 4.12.0", got)
+		}
+	})
+
+	t.Run("missing both config and env returns error", func(t *testing.T) {
+		t.Setenv("CASDOOR_INSTALLED_VERSION", "")
+		t.Setenv("INSTALLED_VERSION", "4.12.0") // Other env vars must NOT be used
+		t.Setenv("CASDOOR_VERSION", "4.12.0")   // Other env vars must NOT be used
+		_, err := resolveInstalledVersion(types.StringNull())
+		if err == nil {
+			t.Fatal("expected error when both config and CASDOOR_INSTALLED_VERSION are missing, got nil")
+		}
+	})
+}

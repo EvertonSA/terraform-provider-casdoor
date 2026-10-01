@@ -243,15 +243,9 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 		config.ApplicationName.ValueString(),
 	)
 
-	installedVersion := config.InstalledVersion.ValueString()
-	if installedVersion == "" {
-		installedVersion = os.Getenv("CASDOOR_INSTALLED_VERSION")
-	}
-	if installedVersion == "" {
-		resp.Diagnostics.AddError(
-			"Missing Required Casdoor Version",
-			"The Casdoor server version must be explicitly configured via the 'installed_version' attribute or the CASDOOR_INSTALLED_VERSION environment variable.",
-		)
+	installedVersion, err := resolveInstalledVersion(config.InstalledVersion)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing Required Casdoor Version", err.Error())
 		return
 	}
 
@@ -280,6 +274,18 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	resp.DataSourceData = providerClient
 	resp.ResourceData = providerClient
+}
+
+// resolveInstalledVersion returns the explicit version from config or CASDOOR_INSTALLED_VERSION env var.
+func resolveInstalledVersion(configVersion types.String) (string, error) {
+	v := configVersion.ValueString()
+	if v == "" {
+		v = os.Getenv("CASDOOR_INSTALLED_VERSION")
+	}
+	if v == "" {
+		return "", fmt.Errorf("the Casdoor server version must be explicitly configured via the 'installed_version' attribute or the CASDOOR_INSTALLED_VERSION environment variable")
+	}
+	return v, nil
 }
 
 // appCredentials holds the OAuth credentials fetched via login.

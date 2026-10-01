@@ -78,6 +78,7 @@ type CasdoorTestConfig struct {
 	Certificate      string
 	OrganizationName string
 	ApplicationName  string
+	InstalledVersion string
 }
 
 // TestEnv holds the test environment including optional container.
@@ -299,6 +300,7 @@ func getDemoConfig() CasdoorTestConfig {
 		Certificate:      testJwtPublicKey,
 		OrganizationName: testCasdoorOrganization,
 		ApplicationName:  testCasdoorApplication,
+		InstalledVersion: "3.153.0",
 	}
 }
 
@@ -321,6 +323,10 @@ func testAccProtoV6ProviderFactories(_ CasdoorTestConfig) map[string]func() (tfp
 }
 
 func testAccProviderConfig(config CasdoorTestConfig) string {
+	versionAttr := ""
+	if config.InstalledVersion != "" {
+		versionAttr = fmt.Sprintf("  installed_version = %q\n", config.InstalledVersion)
+	}
 	return fmt.Sprintf(`
 provider "casdoor" {
   endpoint          = %q
@@ -329,6 +335,6 @@ provider "casdoor" {
   certificate       = %q
   organization_name = %q
   application_name  = %q
-}
-`, config.Endpoint, config.ClientID, config.ClientSecret, config.Certificate, config.OrganizationName, config.ApplicationName)
+%s}
+`, config.Endpoint, config.ClientID, config.ClientSecret, config.Certificate, config.OrganizationName, config.ApplicationName, versionAttr)
 }

@@ -4,10 +4,12 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -33,7 +35,12 @@ var (
 
 // ApplicationResource defines the resource implementation.
 type ApplicationResource struct {
-	client *casdoorsdk.Client
+	client  *casdoorsdk.Client
+	version *version.Version
+}
+
+func (r *ApplicationResource) isV4() bool {
+	return r.version != nil && r.version.GreaterThanOrEqual(casdoorV4Version)
 }
 
 // ProviderItemModel represents a provider item configuration.
@@ -1064,20 +1071,13 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 }
 
 func (r *ApplicationResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	client, ok := req.ProviderData.(*casdoorsdk.Client)
+	client, ver, ok := getProviderClient(req.ProviderData, &resp.Diagnostics)
 	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *casdoorsdk.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
 		return
 	}
 
 	r.client = client
+	r.version = ver
 }
 
 // applicationPlanToSDK converts an ApplicationResourceModel into a casdoorsdk.Application.
@@ -1972,16 +1972,76 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	ok, err := r.client.UpdateApplication(app)
-	if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("updating application %q", plan.Name.ValueString())) {
-		return
-	}
+	if r.isV4() {
+		appId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
 
-	// Keep computed values from state.
-	plan.CreatedTime = state.CreatedTime
-	plan.ClientID = state.ClientID
-	plan.ClientSecret = state.ClientSecret
-	plan.CertPublicKey = state.CertPublicKey
+		// Step 1: Read existing server object into a raw map to preserve unmodeled fields
+		rawUrl := r.client.GetUrl("get-application", map[string]string{"id": appId})
+		rawBytes, err := r.client.DoGetBytes(rawUrl)
+		var serverObj map[string]any
+		if err == nil && len(rawBytes) > 0 {
+			_ = json.Unmarshal(rawBytes, &serverObj)
+		}
+		if serverObj == nil {
+			serverObj = make(map[string]any)
+		}
+
+		// Step 2: Marshal SDK struct to map and overlay onto serverObj
+		planBytes, err := json.Marshal(app)
+		if err != nil {
+			resp.Diagnostics.AddError("Error marshaling plan", err.Error())
+			return
+		}
+		var planMap map[string]any
+		if err := json.Unmarshal(planBytes, &planMap); err != nil {
+			resp.Diagnostics.AddError("Error unmarshaling plan map", err.Error())
+			return
+		}
+
+		for k, v := range planMap {
+			serverObj[k] = v
+		}
+
+		mergedBytes, err := json.Marshal(serverObj)
+		if err != nil {
+			resp.Diagnostics.AddError("Error marshaling update payload", err.Error())
+			return
+		}
+
+		// Step 3: Post merged object
+		postResp, err := r.client.DoPost("update-application", map[string]string{"id": appId}, mergedBytes, false, false)
+		if err != nil || (postResp != nil && postResp.Status != "ok") {
+			msg := "unknown error"
+			if err != nil {
+				msg = err.Error()
+			} else if postResp != nil && postResp.Msg != "" {
+				msg = postResp.Msg
+			}
+			resp.Diagnostics.AddError("Error Updating Application", fmt.Sprintf("Could not update application %q: %s", plan.Name.ValueString(), msg))
+			return
+		}
+
+		// Keep computed values from state or updated app.
+		plan.CreatedTime = state.CreatedTime
+		plan.ClientID = state.ClientID
+		plan.ClientSecret = state.ClientSecret
+		if updatedApp, err := r.client.GetApplication(plan.Name.ValueString()); err == nil && updatedApp != nil && updatedApp.CertPublicKey != "" {
+			plan.CertPublicKey = types.StringValue(updatedApp.CertPublicKey)
+		} else {
+			plan.CertPublicKey = state.CertPublicKey
+		}
+	} else {
+		ok, err := r.client.UpdateApplication(app)
+		if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("updating application %q", plan.Name.ValueString())) {
+			return
+		}
+
+		// Keep computed values from state.
+		plan.CreatedTime = state.CreatedTime
+		plan.ClientID = state.ClientID
+		plan.ClientSecret = state.ClientSecret
+		plan.CertPublicKey = state.CertPublicKey
+	}
 
 	// Set list values to null if empty to match plan.
 	if len(app.RedirectUris) == 0 {

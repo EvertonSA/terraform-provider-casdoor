@@ -410,7 +410,11 @@ resource "casdoor_organization" "secure" {
 - `default_application` (String) The default application name for this organization.
 - `default_avatar` (String) The default avatar URL for users.
 - `default_password` (String, Sensitive) The default password for new users.
+- `default_token_fields` (List of String) Default token fields.
+- `default_token_format` (String) Default token format (e.g. JWT).
+- `disable_console` (Boolean) Whether to disable console.
 - `disable_signin` (Boolean) Whether sign-in is disabled for the organization.
+- `enable_exclusive_signin` (Boolean) Whether to enable exclusive signin.
 - `enable_soft_deletion` (Boolean) Whether soft deletion is enabled.
 - `enable_tour` (Boolean) Whether the tour guide is enabled.
 - `favicon` (String) The favicon URL of the organization.
@@ -420,24 +424,30 @@ resource "casdoor_organization" "secure" {
 - `ip_whitelist` (String) IP whitelist for the organization.
 - `is_profile_public` (Boolean) Whether user profiles are public by default.
 - `languages` (List of String) Supported languages for the organization.
+- `ldap_attributes` (List of String) LDAP attributes.
 - `logo` (String) The logo URL of the organization.
 - `logo_dark` (String) The dark mode logo URL of the organization.
 - `master_password` (String, Sensitive) The master password for the organization.
 - `master_verification_code` (String, Sensitive) The master verification code.
+- `max_sessions` (Number) Maximum allowed sessions.
 - `mfa_items` (Attributes List) List of MFA configurations. (see [below for nested schema](#nestedatt--mfa_items))
 - `mfa_remember_in_hours` (Number) Number of hours to remember MFA authentication.
 - `nav_items` (List of String) List of navigation items.
 - `org_balance` (Number) The organization balance.
 - `owner` (String) The owner of the organization. Defaults to 'admin'.
 - `password_expire_days` (Number) Number of days before password expires. 0 means no expiration.
+- `password_history_count` (Number) Number of previous passwords to remember to prevent reuse.
 - `password_obfuscator_key` (String, Sensitive) The password obfuscator key.
 - `password_obfuscator_type` (String) The password obfuscator type.
 - `password_options` (List of String) Password complexity options.
 - `password_salt` (String) The salt used for password hashing.
 - `password_type` (String) The password hashing algorithm. Valid values: plain, bcrypt, sha256-salt, md5-salt, etc.
+- `record_retention_days` (Number) Record retention days.
 - `tags` (List of String) Tags for the organization.
 - `theme_data` (Attributes) Theme configuration for the organization. (see [below for nested schema](#nestedatt--theme_data))
+- `token_retention_days` (Number) Token retention days.
 - `use_email_as_username` (Boolean) Whether to use email as username.
+- `use_permanent_avatar` (Boolean) Whether to use permanent avatar.
 - `user_balance` (Number) The user balance.
 - `user_nav_items` (List of String) List of user navigation items.
 - `user_types` (List of String) List of user types allowed in the organization.
@@ -460,6 +470,7 @@ Optional:
 
 - `modify_rule` (String) Rule for modifying this field.
 - `regex` (String) Regex pattern for field validation.
+- `tab` (String) Tab for this account item.
 - `view_rule` (String) Rule for viewing this field.
 - `visible` (Boolean) Whether this field is visible.
 

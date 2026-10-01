@@ -6,13 +6,13 @@ description: |-
   Compatibility
   | Provider | Casdoor server | Tested against |
   | --- | --- | --- |
-  | >= v0.1.0 | >= 3.0.0 | 3.0.0 and 3.153.0 |
+  | >= v0.2.0 | >= 3.0.0 | 3.0.0, 3.153.0, and 4.x |
+  | >= v0.1.0 | 3.x | 3.0.0 and 3.153.0 |
   | <= v0.0.13 | pre-3.x schema | — |
-  Casdoor 3.0.0 changed several object schemas. This provider targets the 3.x
-  schema: attributes that earlier releases exposed but that no longer exist
-  upstream — such as casdoor_adapter.table_name_prefix and
-  casdoor_user.access_key — have been removed, so upgrading is a breaking
-  change for configurations that set them.
+  The provider supports Casdoor 3.x and Casdoor 4.x servers. When connected, the provider
+  queries the server version automatically via /api/get-version-info (or reads
+  installed_version / CASDOOR_INSTALLED_VERSION) and selectively enables
+  v4 attributes and API payload constructs while maintaining full backwards compatibility with 3.x.
   The acceptance suite runs as a CI matrix against both the lowest and highest
   supported server versions, so the range above is verified at its boundaries.
   Versions between them are expected to work but are not individually exercised.
@@ -56,14 +56,14 @@ The Casdoor provider allows you to manage Casdoor resources.
 
 | Provider | Casdoor server | Tested against |
 | --- | --- | --- |
-| >= v0.1.0 | >= 3.0.0 | 3.0.0 and 3.153.0 |
+| >= v0.2.0 | >= 3.0.0 | 3.0.0, 3.153.0, and 4.x |
+| >= v0.1.0 | 3.x | 3.0.0 and 3.153.0 |
 | <= v0.0.13 | pre-3.x schema | — |
 
-Casdoor 3.0.0 changed several object schemas. This provider targets the 3.x
-schema: attributes that earlier releases exposed but that no longer exist
-upstream — such as `casdoor_adapter.table_name_prefix` and
-`casdoor_user.access_key` — have been removed, so upgrading is a breaking
-change for configurations that set them.
+The provider supports Casdoor 3.x and Casdoor 4.x servers. When connected, the provider
+queries the server version automatically via `/api/get-version-info` (or reads
+`installed_version` / `CASDOOR_INSTALLED_VERSION`) and selectively enables
+v4 attributes and API payload constructs while maintaining full backwards compatibility with 3.x.
 
 The acceptance suite runs as a CI matrix against both the lowest and highest
 supported server versions, so the range above is verified at its boundaries.
@@ -153,5 +153,6 @@ provider "casdoor" {
 - `certificate` (String) The X.509 certificate (public key) for JWT verification. Required if username is not set.
 - `client_id` (String) The OAuth2 client ID for the Casdoor application. Required if username is not set.
 - `client_secret` (String, Sensitive) The OAuth2 client secret for the Casdoor application. Required if username is not set.
+- `installed_version` (String) The installed version of the Casdoor server (e.g. 4.12.0). If omitted, the provider queries the server version automatically via the Casdoor API.
 - `password` (String, Sensitive) Admin password for authentication. Required if username is set.
 - `username` (String) Admin username for authentication. If set, the provider will login and fetch OAuth credentials automatically.

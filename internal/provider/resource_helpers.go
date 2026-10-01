@@ -6,9 +6,48 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// ProviderClient holds the Casdoor SDK client and detected server version.
+type ProviderClient struct {
+	Client  *casdoorsdk.Client
+	Version *version.Version
+}
+
+// casdoorV4Version is the minimum semver version for Casdoor 4.x.
+var casdoorV4Version = version.Must(version.NewVersion("4.0.0"))
+
+// IsV4OrGreater reports whether the Casdoor server version is 4.0.0 or higher.
+func (c *ProviderClient) IsV4OrGreater() bool {
+	if c == nil || c.Version == nil {
+		return false
+	}
+	return c.Version.GreaterThanOrEqual(casdoorV4Version)
+}
+
+// getProviderClient extracts *casdoorsdk.Client and *version.Version from req.ProviderData.
+func getProviderClient(providerData any, diags *diag.Diagnostics) (*casdoorsdk.Client, *version.Version, bool) {
+	if providerData == nil {
+		return nil, nil, false
+	}
+
+	switch c := providerData.(type) {
+	case *ProviderClient:
+		return c.Client, c.Version, true
+	case *casdoorsdk.Client:
+		return c, nil, true
+	default:
+		diags.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected *ProviderClient or *casdoorsdk.Client, got: %T. Please report this issue to the provider developers.", providerData),
+		)
+		return nil, nil, false
+	}
+}
 
 // sdkError checks the (bool, error) result from Casdoor SDK calls and adds
 // appropriate diagnostics. Returns true if an error was recorded (caller

@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -32,6 +34,7 @@ type CasdoorProviderModel struct {
 	Certificate      types.String `tfsdk:"certificate"`
 	OrganizationName types.String `tfsdk:"organization_name"`
 	ApplicationName  types.String `tfsdk:"application_name"`
+	InstalledVersion types.String `tfsdk:"installed_version"`
 	// Alternative auth: admin login.
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
@@ -58,14 +61,14 @@ func (p *CasdoorProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 
 | Provider | Casdoor server | Tested against |
 | --- | --- | --- |
-| >= v0.1.0 | >= 3.0.0 | 3.0.0 and 3.153.0 |
+| >= v0.2.0 | >= 3.0.0 | 3.0.0, 3.153.0, and 4.x |
+| >= v0.1.0 | 3.x | 3.0.0 and 3.153.0 |
 | <= v0.0.13 | pre-3.x schema | — |
 
-Casdoor 3.0.0 changed several object schemas. This provider targets the 3.x
-schema: attributes that earlier releases exposed but that no longer exist
-upstream — such as ` + "`casdoor_adapter.table_name_prefix`" + ` and
-` + "`casdoor_user.access_key`" + ` — have been removed, so upgrading is a breaking
-change for configurations that set them.
+The provider supports Casdoor 3.x and Casdoor 4.x servers. When connected, the provider
+queries the server version automatically via ` + "`/api/get-version-info`" + ` (or reads
+` + "`installed_version`" + ` / ` + "`CASDOOR_INSTALLED_VERSION`" + `) and selectively enables
+v4 attributes and API payload constructs while maintaining full backwards compatibility with 3.x.
 
 The acceptance suite runs as a CI matrix against both the lowest and highest
 supported server versions, so the range above is verified at its boundaries.
@@ -149,6 +152,10 @@ See the [Casdoor Data Initialization docs](https://casdoor.org/docs/deployment/d
 				Description: "Admin password for authentication. Required if username is set.",
 				Optional:    true,
 				Sensitive:   true,
+			},
+			"installed_version": schema.StringAttribute{
+				Description: "The installed version of the Casdoor server (e.g. 4.12.0). If omitted, the provider queries the server version automatically via the Casdoor API.",
+				Optional:    true,
 			},
 		},
 	}
@@ -234,8 +241,77 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 		config.ApplicationName.ValueString(),
 	)
 
-	resp.DataSourceData = client
-	resp.ResourceData = client
+	installedVersion := config.InstalledVersion.ValueString()
+	if installedVersion == "" {
+		installedVersion = os.Getenv("CASDOOR_INSTALLED_VERSION")
+	}
+	if installedVersion == "" {
+		installedVersion = os.Getenv("INSTALLED_VERSION")
+	}
+	if installedVersion == "" {
+		v, err := fetchCasdoorVersion(client)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Unable to Determine Casdoor Server Version",
+				fmt.Sprintf("Could not retrieve Casdoor server version automatically: %s. Please specify 'installed_version' in the provider configuration or set the CASDOOR_INSTALLED_VERSION environment variable.", err),
+			)
+			return
+		}
+		installedVersion = v
+	}
+
+	parsedVersion, err := version.NewVersion(installedVersion)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid Casdoor Version",
+			fmt.Sprintf("Failed to parse Casdoor version %q: %s", installedVersion, err),
+		)
+		return
+	}
+
+	minimumVersion, _ := version.NewVersion("3.0.0")
+	if parsedVersion.LessThan(minimumVersion) {
+		resp.Diagnostics.AddError(
+			"Unsupported Casdoor Version",
+			fmt.Sprintf("Unsupported version of Casdoor. Minimum supported version is %s. Running version is %s.", minimumVersion, installedVersion),
+		)
+		return
+	}
+
+	providerClient := &ProviderClient{
+		Client:  client,
+		Version: parsedVersion,
+	}
+
+	resp.DataSourceData = providerClient
+	resp.ResourceData = providerClient
+}
+
+// fetchCasdoorVersion queries the /api/get-version-info endpoint to determine the Casdoor version.
+func fetchCasdoorVersion(client *casdoorsdk.Client) (string, error) {
+	rawUrl := client.GetUrl("get-version-info", nil)
+	rawBytes, err := client.DoGetBytes(rawUrl)
+	if err != nil {
+		return "", fmt.Errorf("HTTP request to %s failed: %w", rawUrl, err)
+	}
+
+	var rawData any
+	if err := json.Unmarshal(rawBytes, &rawData); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	switch v := rawData.(type) {
+	case string:
+		if v != "" {
+			return strings.TrimPrefix(v, "v"), nil
+		}
+	case map[string]any:
+		if ver, ok := v["version"].(string); ok && ver != "" {
+			return strings.TrimPrefix(ver, "v"), nil
+		}
+	}
+
+	return "", fmt.Errorf("no version string found in response: %s", string(rawBytes))
 }
 
 // appCredentials holds the OAuth credentials fetched via login.

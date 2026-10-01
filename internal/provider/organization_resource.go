@@ -4,10 +4,12 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -30,7 +32,12 @@ var (
 )
 
 type OrganizationResource struct {
-	client *casdoorsdk.Client
+	client  *casdoorsdk.Client
+	version *version.Version
+}
+
+func (r *OrganizationResource) isV4() bool {
+	return r.version != nil && r.version.GreaterThanOrEqual(casdoorV4Version)
 }
 
 // AccountItemModel represents an account item configuration.
@@ -40,6 +47,7 @@ type AccountItemModel struct {
 	ViewRule   types.String `tfsdk:"view_rule"`
 	ModifyRule types.String `tfsdk:"modify_rule"`
 	Regex      types.String `tfsdk:"regex"`
+	Tab        types.String `tfsdk:"tab"`
 }
 
 // MfaItemModel represents an MFA item configuration.
@@ -65,6 +73,7 @@ func AccountItemAttrTypes() map[string]attr.Type {
 		"view_rule":   types.StringType,
 		"modify_rule": types.StringType,
 		"regex":       types.StringType,
+		"tab":         types.StringType,
 	}
 }
 
@@ -86,6 +95,7 @@ func accountItemsFromSDK(items []*casdoorsdk.AccountItem) (types.List, diag.Diag
 			"view_rule":   types.StringValue(a.ViewRule),
 			"modify_rule": types.StringValue(a.ModifyRule),
 			"regex":       types.StringValue(a.Regex),
+			"tab":         types.StringValue(a.Tab),
 		})
 		diags.Append(d...)
 		objList = append(objList, obj)
@@ -163,6 +173,16 @@ type OrganizationResourceModel struct {
 	BalanceCurrency        types.String  `tfsdk:"balance_currency"`
 	AccountMenu            types.String  `tfsdk:"account_menu"`
 	DcrPolicy              types.String  `tfsdk:"dcr_policy"`
+	UsePermanentAvatar     types.Bool    `tfsdk:"use_permanent_avatar"`
+	PasswordHistoryCount   types.Int64   `tfsdk:"password_history_count"`
+	TokenRetentionDays     types.Int64   `tfsdk:"token_retention_days"`
+	RecordRetentionDays    types.Int64   `tfsdk:"record_retention_days"`
+	DefaultTokenFormat     types.String  `tfsdk:"default_token_format"`
+	DefaultTokenFields     types.List    `tfsdk:"default_token_fields"`
+	DisableConsole         types.Bool    `tfsdk:"disable_console"`
+	EnableExclusiveSignin  types.Bool    `tfsdk:"enable_exclusive_signin"`
+	MaxSessions            types.Int64   `tfsdk:"max_sessions"`
+	LdapAttributes         types.List    `tfsdk:"ldap_attributes"`
 }
 
 func NewOrganizationResource() resource.Resource {
@@ -482,6 +502,12 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 							Description: "Regex pattern for field validation.",
 							Optional:    true,
 						},
+						"tab": schema.StringAttribute{
+							Description: "Tab for this account item.",
+							Optional:    true,
+							Computed:    true,
+							Default:     stringdefault.StaticString(""),
+						},
 					},
 				},
 			},
@@ -523,25 +549,84 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				Computed:    true,
 				Default:     stringdefault.StaticString(""),
 			},
+			"use_permanent_avatar": schema.BoolAttribute{
+				Description: "Whether to use permanent avatar.",
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
+			},
+			"password_history_count": schema.Int64Attribute{
+				Description: "Number of previous passwords to remember to prevent reuse.",
+				Optional:    true,
+				Computed:    true,
+				Default:     int64default.StaticInt64(0),
+			},
+			"token_retention_days": schema.Int64Attribute{
+				Description: "Token retention days.",
+				Optional:    true,
+				Computed:    true,
+				Default:     int64default.StaticInt64(0),
+			},
+			"record_retention_days": schema.Int64Attribute{
+				Description: "Record retention days.",
+				Optional:    true,
+				Computed:    true,
+				Default:     int64default.StaticInt64(0),
+			},
+			"default_token_format": schema.StringAttribute{
+				Description: "Default token format (e.g. JWT).",
+				Optional:    true,
+				Computed:    true,
+				Default:     stringdefault.StaticString(""),
+			},
+			"default_token_fields": schema.ListAttribute{
+				Description: "Default token fields.",
+				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
+				ElementType: types.StringType,
+			},
+			"disable_console": schema.BoolAttribute{
+				Description: "Whether to disable console.",
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
+			},
+			"enable_exclusive_signin": schema.BoolAttribute{
+				Description: "Whether to enable exclusive signin.",
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
+			},
+			"max_sessions": schema.Int64Attribute{
+				Description: "Maximum allowed sessions.",
+				Optional:    true,
+				Computed:    true,
+				Default:     int64default.StaticInt64(0),
+			},
+			"ldap_attributes": schema.ListAttribute{
+				Description: "LDAP attributes.",
+				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
+				ElementType: types.StringType,
+			},
 		},
 	}
 }
 
 func (r *OrganizationResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	client, ok := req.ProviderData.(*casdoorsdk.Client)
+	client, ver, ok := getProviderClient(req.ProviderData, &resp.Diagnostics)
 	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *casdoorsdk.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
 		return
 	}
 
 	r.client = client
+	r.version = ver
 }
 
 func organizationPlanToSDK(ctx context.Context, plan OrganizationResourceModel, createdTime string) (*casdoorsdk.Organization, diag.Diagnostics) {
@@ -562,6 +647,8 @@ func organizationPlanToSDK(ctx context.Context, plan OrganizationResourceModel, 
 	userNavItems, d := stringListToSDK(ctx, plan.UserNavItems)
 	diags.Append(d...)
 	widgetItems, d := stringListToSDK(ctx, plan.WidgetItems)
+	diags.Append(d...)
+	ldapAttributes, d := stringListToSDK(ctx, plan.LdapAttributes)
 	diags.Append(d...)
 	if diags.HasError() {
 		return nil, diags
@@ -613,6 +700,7 @@ func organizationPlanToSDK(ctx context.Context, plan OrganizationResourceModel, 
 				ViewRule:   a.ViewRule.ValueString(),
 				ModifyRule: a.ModifyRule.ValueString(),
 				Regex:      a.Regex.ValueString(),
+				Tab:        a.Tab.ValueString(),
 			})
 		}
 	}
@@ -663,13 +751,111 @@ func organizationPlanToSDK(ctx context.Context, plan OrganizationResourceModel, 
 		BalanceCurrency:        plan.BalanceCurrency.ValueString(),
 		AccountMenu:            plan.AccountMenu.ValueString(),
 		DcrPolicy:              plan.DcrPolicy.ValueString(),
+		UsePermanentAvatar:     plan.UsePermanentAvatar.ValueBool(),
+		TokenRetentionDays:     int(plan.TokenRetentionDays.ValueInt64()),
+		RecordRetentionDays:    int(plan.RecordRetentionDays.ValueInt64()),
+		DefaultTokenFormat:     plan.DefaultTokenFormat.ValueString(),
+		LdapAttributes:         ldapAttributes,
 	}, diags
+}
+
+func (r *OrganizationResource) populateV4FieldsFromRaw(ctx context.Context, orgId string, model *OrganizationResourceModel, diags *diag.Diagnostics) {
+	rawUrl := r.client.GetUrl("get-organization", map[string]string{"id": orgId})
+	if rawBytes, rawErr := r.client.DoGetBytes(rawUrl); rawErr == nil && len(rawBytes) > 0 {
+		var rawMap map[string]any
+		if json.Unmarshal(rawBytes, &rawMap) == nil {
+			if v, ok := rawMap["passwordHistoryCount"].(float64); ok {
+				model.PasswordHistoryCount = types.Int64Value(int64(v))
+			} else {
+				model.PasswordHistoryCount = types.Int64Value(0)
+			}
+			if v, ok := rawMap["disableConsole"].(bool); ok {
+				model.DisableConsole = types.BoolValue(v)
+			} else {
+				model.DisableConsole = types.BoolValue(false)
+			}
+			if v, ok := rawMap["enableExclusiveSignin"].(bool); ok {
+				model.EnableExclusiveSignin = types.BoolValue(v)
+			} else {
+				model.EnableExclusiveSignin = types.BoolValue(false)
+			}
+			if v, ok := rawMap["maxSessions"].(float64); ok {
+				model.MaxSessions = types.Int64Value(int64(v))
+			} else {
+				model.MaxSessions = types.Int64Value(0)
+			}
+			if list, ok := rawMap["defaultTokenFields"].([]any); ok && len(list) > 0 {
+				strList := make([]string, 0, len(list))
+				for _, item := range list {
+					if s, ok := item.(string); ok {
+						strList = append(strList, s)
+					}
+				}
+				var d diag.Diagnostics
+				model.DefaultTokenFields, d = stringListFromSDK(ctx, strList)
+				diags.Append(d...)
+			} else {
+				model.DefaultTokenFields = types.ListNull(types.StringType)
+			}
+			return
+		}
+	}
+	model.PasswordHistoryCount = types.Int64Value(0)
+	model.DisableConsole = types.BoolValue(false)
+	model.EnableExclusiveSignin = types.BoolValue(false)
+	model.MaxSessions = types.Int64Value(0)
+	model.DefaultTokenFields = types.ListNull(types.StringType)
+}
+
+func (r *OrganizationResource) validateV4Attributes(plan OrganizationResourceModel, diags *diag.Diagnostics) {
+	if r.isV4() {
+		return
+	}
+	verStr := "pre-4.x"
+	if r.version != nil {
+		verStr = r.version.String()
+	}
+	if !plan.PasswordHistoryCount.IsNull() && plan.PasswordHistoryCount.ValueInt64() != 0 {
+		diags.AddError(
+			"Unsupported Attribute for Casdoor Version",
+			fmt.Sprintf("attribute 'password_history_count' requires Casdoor 4.0.0 or later (running %s)", verStr),
+		)
+	}
+	if !plan.DisableConsole.IsNull() && plan.DisableConsole.ValueBool() {
+		diags.AddError(
+			"Unsupported Attribute for Casdoor Version",
+			fmt.Sprintf("attribute 'disable_console' requires Casdoor 4.0.0 or later (running %s)", verStr),
+		)
+	}
+	if !plan.EnableExclusiveSignin.IsNull() && plan.EnableExclusiveSignin.ValueBool() {
+		diags.AddError(
+			"Unsupported Attribute for Casdoor Version",
+			fmt.Sprintf("attribute 'enable_exclusive_signin' requires Casdoor 4.0.0 or later (running %s)", verStr),
+		)
+	}
+	if !plan.MaxSessions.IsNull() && plan.MaxSessions.ValueInt64() != 0 {
+		diags.AddError(
+			"Unsupported Attribute for Casdoor Version",
+			fmt.Sprintf("attribute 'max_sessions' requires Casdoor 4.0.0 or later (running %s)", verStr),
+		)
+	}
+	if !plan.DefaultTokenFields.IsNull() && len(plan.DefaultTokenFields.Elements()) > 0 {
+		diags.AddError(
+			"Unsupported Attribute for Casdoor Version",
+			fmt.Sprintf("attribute 'default_token_fields' requires Casdoor 4.0.0 or later (running %s)", verStr),
+		)
+	}
 }
 
 func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan OrganizationResourceModel
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	r.validateV4Attributes(plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -722,11 +908,28 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		resp.Diagnostics.Append(diags...)
 		plan.WidgetItems, diags = stringListFromSDK(ctx, createdOrg.WidgetItems)
 		resp.Diagnostics.Append(diags...)
+		plan.LdapAttributes, diags = stringListFromSDK(ctx, createdOrg.LdapAttributes)
+		resp.Diagnostics.Append(diags...)
 		if len(createdOrg.MfaItems) == 0 {
 			plan.MfaItems = types.ListNull(types.ObjectType{AttrTypes: MfaItemAttrTypes()})
 		}
 		plan.AccountItems, diags = accountItemsFromSDK(createdOrg.AccountItems)
 		resp.Diagnostics.Append(diags...)
+
+		plan.UsePermanentAvatar = types.BoolValue(createdOrg.UsePermanentAvatar)
+		plan.TokenRetentionDays = types.Int64Value(int64(createdOrg.TokenRetentionDays))
+		plan.RecordRetentionDays = types.Int64Value(int64(createdOrg.RecordRetentionDays))
+		plan.DefaultTokenFormat = types.StringValue(createdOrg.DefaultTokenFormat)
+	}
+
+	if r.isV4() {
+		r.populateV4FieldsFromRaw(ctx, plan.Owner.ValueString()+"/"+plan.Name.ValueString(), &plan, &resp.Diagnostics)
+	} else {
+		plan.PasswordHistoryCount = types.Int64Value(0)
+		plan.DisableConsole = types.BoolValue(false)
+		plan.EnableExclusiveSignin = types.BoolValue(false)
+		plan.MaxSessions = types.Int64Value(0)
+		plan.DefaultTokenFields = types.ListNull(types.StringType)
 	}
 
 	plan.ID = types.StringValue(plan.Owner.ValueString() + "/" + plan.Name.ValueString())
@@ -814,6 +1017,21 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 	state.BalanceCurrency = types.StringValue(org.BalanceCurrency)
 	state.AccountMenu = types.StringValue(org.AccountMenu)
 	state.DcrPolicy = types.StringValue(org.DcrPolicy)
+	state.UsePermanentAvatar = types.BoolValue(org.UsePermanentAvatar)
+	state.TokenRetentionDays = types.Int64Value(int64(org.TokenRetentionDays))
+	state.RecordRetentionDays = types.Int64Value(int64(org.RecordRetentionDays))
+	state.DefaultTokenFormat = types.StringValue(org.DefaultTokenFormat)
+
+	if r.isV4() {
+		// Fetch raw server JSON to populate 4.x fields not in SDK struct
+		r.populateV4FieldsFromRaw(ctx, state.Owner.ValueString()+"/"+state.Name.ValueString(), &state, &resp.Diagnostics)
+	} else {
+		state.PasswordHistoryCount = types.Int64Value(0)
+		state.DisableConsole = types.BoolValue(false)
+		state.EnableExclusiveSignin = types.BoolValue(false)
+		state.MaxSessions = types.Int64Value(0)
+		state.DefaultTokenFields = types.ListNull(types.StringType)
+	}
 
 	// Convert string slices to list types.
 	var diags diag.Diagnostics
@@ -833,6 +1051,8 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 	state.UserNavItems, diags = stringListFromSDK(ctx, org.UserNavItems)
 	resp.Diagnostics.Append(diags...)
 	state.WidgetItems, diags = stringListFromSDK(ctx, org.WidgetItems)
+	resp.Diagnostics.Append(diags...)
+	state.LdapAttributes, diags = stringListFromSDK(ctx, org.LdapAttributes)
 	resp.Diagnostics.Append(diags...)
 
 	// Convert ThemeData to object type.
@@ -887,39 +1107,173 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	org, diags := organizationPlanToSDK(ctx, plan, plan.CreatedTime.ValueString())
-	resp.Diagnostics.Append(diags...)
+	r.validateV4Attributes(plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	ok, err := r.client.UpdateOrganization(org)
-	if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("updating organization %q", plan.Name.ValueString())) {
-		return
-	}
+	if r.isV4() {
+		orgId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
 
-	// Set list values to null if empty to match plan.
-	plan.PasswordOptions, diags = stringListFromSDK(ctx, org.PasswordOptions)
-	resp.Diagnostics.Append(diags...)
-	plan.CountryCodes, diags = stringListFromSDK(ctx, org.CountryCodes)
-	resp.Diagnostics.Append(diags...)
-	plan.UserTypes, diags = stringListFromSDK(ctx, org.UserTypes)
-	resp.Diagnostics.Append(diags...)
-	plan.Tags, diags = stringListFromSDK(ctx, org.Tags)
-	resp.Diagnostics.Append(diags...)
-	plan.Languages, diags = stringListFromSDK(ctx, org.Languages)
-	resp.Diagnostics.Append(diags...)
-	plan.NavItems, diags = stringListFromSDK(ctx, org.NavItems)
-	resp.Diagnostics.Append(diags...)
-	plan.UserNavItems, diags = stringListFromSDK(ctx, org.UserNavItems)
-	resp.Diagnostics.Append(diags...)
-	plan.WidgetItems, diags = stringListFromSDK(ctx, org.WidgetItems)
-	resp.Diagnostics.Append(diags...)
-	if len(org.MfaItems) == 0 {
-		plan.MfaItems = types.ListNull(types.ObjectType{AttrTypes: MfaItemAttrTypes()})
+		// Step 1: Read existing server object into a raw map to preserve all unmodeled/4.x fields
+		rawUrl := r.client.GetUrl("get-organization", map[string]string{"id": orgId})
+		rawBytes, err := r.client.DoGetBytes(rawUrl)
+		var serverObj map[string]any
+		if err == nil && len(rawBytes) > 0 {
+			_ = json.Unmarshal(rawBytes, &serverObj)
+		}
+		if serverObj == nil {
+			serverObj = make(map[string]any)
+		}
+
+		// Step 2: Convert plan to SDK struct
+		org, diags := organizationPlanToSDK(ctx, plan, plan.CreatedTime.ValueString())
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		// Step 3: Marshal SDK struct to map and overlay onto serverObj
+		planBytes, err := json.Marshal(org)
+		if err != nil {
+			resp.Diagnostics.AddError("Error marshaling plan", err.Error())
+			return
+		}
+		var planMap map[string]any
+		if err := json.Unmarshal(planBytes, &planMap); err != nil {
+			resp.Diagnostics.AddError("Error unmarshaling plan map", err.Error())
+			return
+		}
+
+		for k, v := range planMap {
+			serverObj[k] = v
+		}
+
+		// Apply 4.x fields not in SDK struct directly to serverObj
+		if !plan.PasswordHistoryCount.IsNull() && !plan.PasswordHistoryCount.IsUnknown() {
+			serverObj["passwordHistoryCount"] = plan.PasswordHistoryCount.ValueInt64()
+		}
+		if !plan.DisableConsole.IsNull() && !plan.DisableConsole.IsUnknown() {
+			serverObj["disableConsole"] = plan.DisableConsole.ValueBool()
+		}
+		if !plan.EnableExclusiveSignin.IsNull() && !plan.EnableExclusiveSignin.IsUnknown() {
+			serverObj["enableExclusiveSignin"] = plan.EnableExclusiveSignin.ValueBool()
+		}
+		if !plan.MaxSessions.IsNull() && !plan.MaxSessions.IsUnknown() {
+			serverObj["maxSessions"] = plan.MaxSessions.ValueInt64()
+		}
+		if !plan.DefaultTokenFields.IsNull() && !plan.DefaultTokenFields.IsUnknown() {
+			var tokenFields []string
+			_ = plan.DefaultTokenFields.ElementsAs(ctx, &tokenFields, false)
+			serverObj["defaultTokenFields"] = tokenFields
+		}
+
+		mergedBytes, err := json.Marshal(serverObj)
+		if err != nil {
+			resp.Diagnostics.AddError("Error marshaling update payload", err.Error())
+			return
+		}
+
+		// Step 4: Post merged object
+		postResp, err := r.client.DoPost("update-organization", map[string]string{"id": orgId}, mergedBytes, false, false)
+		if err != nil || (postResp != nil && postResp.Status != "ok") {
+			msg := "unknown error"
+			if err != nil {
+				msg = err.Error()
+			} else if postResp != nil && postResp.Msg != "" {
+				msg = postResp.Msg
+			}
+			resp.Diagnostics.AddError("Error Updating Organization", fmt.Sprintf("Could not update organization %q: %s", plan.Name.ValueString(), msg))
+			return
+		}
+
+		// Read back to populate state
+		updatedOrg, err := r.client.GetOrganization(orgId)
+		if err != nil || updatedOrg == nil {
+			resp.Diagnostics.AddError("Error Reading Organization After Update", fmt.Sprintf("Could not read organization %q: %v", plan.Name.ValueString(), err))
+			return
+		}
+
+		// Update list values to match plan
+		plan.PasswordOptions, diags = stringListFromSDK(ctx, updatedOrg.PasswordOptions)
+		resp.Diagnostics.Append(diags...)
+		plan.CountryCodes, diags = stringListFromSDK(ctx, updatedOrg.CountryCodes)
+		resp.Diagnostics.Append(diags...)
+		plan.UserTypes, diags = stringListFromSDK(ctx, updatedOrg.UserTypes)
+		resp.Diagnostics.Append(diags...)
+		plan.Tags, diags = stringListFromSDK(ctx, updatedOrg.Tags)
+		resp.Diagnostics.Append(diags...)
+		plan.Languages, diags = stringListFromSDK(ctx, updatedOrg.Languages)
+		resp.Diagnostics.Append(diags...)
+		plan.NavItems, diags = stringListFromSDK(ctx, updatedOrg.NavItems)
+		resp.Diagnostics.Append(diags...)
+		plan.UserNavItems, diags = stringListFromSDK(ctx, updatedOrg.UserNavItems)
+		resp.Diagnostics.Append(diags...)
+		plan.WidgetItems, diags = stringListFromSDK(ctx, updatedOrg.WidgetItems)
+		resp.Diagnostics.Append(diags...)
+		plan.LdapAttributes, diags = stringListFromSDK(ctx, updatedOrg.LdapAttributes)
+		resp.Diagnostics.Append(diags...)
+		if len(updatedOrg.MfaItems) == 0 {
+			plan.MfaItems = types.ListNull(types.ObjectType{AttrTypes: MfaItemAttrTypes()})
+		}
+		plan.AccountItems, diags = accountItemsFromSDK(updatedOrg.AccountItems)
+		resp.Diagnostics.Append(diags...)
+
+		plan.UsePermanentAvatar = types.BoolValue(updatedOrg.UsePermanentAvatar)
+		plan.TokenRetentionDays = types.Int64Value(int64(updatedOrg.TokenRetentionDays))
+		plan.RecordRetentionDays = types.Int64Value(int64(updatedOrg.RecordRetentionDays))
+		plan.DefaultTokenFormat = types.StringValue(updatedOrg.DefaultTokenFormat)
+
+		r.populateV4FieldsFromRaw(ctx, orgId, &plan, &resp.Diagnostics)
+	} else {
+		// Casdoor 3.x update logic
+		org, diags := organizationPlanToSDK(ctx, plan, plan.CreatedTime.ValueString())
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		ok, err := r.client.UpdateOrganization(org)
+		if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("updating organization %q", plan.Name.ValueString())) {
+			return
+		}
+
+		// Set list values to null if empty to match plan.
+		plan.PasswordOptions, diags = stringListFromSDK(ctx, org.PasswordOptions)
+		resp.Diagnostics.Append(diags...)
+		plan.CountryCodes, diags = stringListFromSDK(ctx, org.CountryCodes)
+		resp.Diagnostics.Append(diags...)
+		plan.UserTypes, diags = stringListFromSDK(ctx, org.UserTypes)
+		resp.Diagnostics.Append(diags...)
+		plan.Tags, diags = stringListFromSDK(ctx, org.Tags)
+		resp.Diagnostics.Append(diags...)
+		plan.Languages, diags = stringListFromSDK(ctx, org.Languages)
+		resp.Diagnostics.Append(diags...)
+		plan.NavItems, diags = stringListFromSDK(ctx, org.NavItems)
+		resp.Diagnostics.Append(diags...)
+		plan.UserNavItems, diags = stringListFromSDK(ctx, org.UserNavItems)
+		resp.Diagnostics.Append(diags...)
+		plan.WidgetItems, diags = stringListFromSDK(ctx, org.WidgetItems)
+		resp.Diagnostics.Append(diags...)
+		plan.LdapAttributes, diags = stringListFromSDK(ctx, org.LdapAttributes)
+		resp.Diagnostics.Append(diags...)
+		if len(org.MfaItems) == 0 {
+			plan.MfaItems = types.ListNull(types.ObjectType{AttrTypes: MfaItemAttrTypes()})
+		}
+		plan.AccountItems, diags = accountItemsFromSDK(org.AccountItems)
+		resp.Diagnostics.Append(diags...)
+
+		plan.UsePermanentAvatar = types.BoolValue(org.UsePermanentAvatar)
+		plan.TokenRetentionDays = types.Int64Value(int64(org.TokenRetentionDays))
+		plan.RecordRetentionDays = types.Int64Value(int64(org.RecordRetentionDays))
+		plan.DefaultTokenFormat = types.StringValue(org.DefaultTokenFormat)
+
+		plan.PasswordHistoryCount = types.Int64Value(0)
+		plan.DisableConsole = types.BoolValue(false)
+		plan.EnableExclusiveSignin = types.BoolValue(false)
+		plan.MaxSessions = types.Int64Value(0)
+		plan.DefaultTokenFields = types.ListNull(types.StringType)
 	}
-	plan.AccountItems, diags = accountItemsFromSDK(org.AccountItems)
-	resp.Diagnostics.Append(diags...)
 
 	plan.ID = types.StringValue(plan.Owner.ValueString() + "/" + plan.Name.ValueString())
 

@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -32,6 +34,7 @@ type CasdoorProviderModel struct {
 	Certificate      types.String `tfsdk:"certificate"`
 	OrganizationName types.String `tfsdk:"organization_name"`
 	ApplicationName  types.String `tfsdk:"application_name"`
+	InstalledVersion types.String `tfsdk:"installed_version"`
 	// Alternative auth: admin login.
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
@@ -150,6 +153,10 @@ See the [Casdoor Data Initialization docs](https://casdoor.org/docs/deployment/d
 				Optional:    true,
 				Sensitive:   true,
 			},
+			"installed_version": schema.StringAttribute{
+				Description: "The installed version of the Casdoor server (e.g. 4.12.0). Can also be set via the CASDOOR_INSTALLED_VERSION environment variable.",
+				Optional:    true,
+			},
 		},
 	}
 }
@@ -234,8 +241,43 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 		config.ApplicationName.ValueString(),
 	)
 
-	resp.DataSourceData = client
-	resp.ResourceData = client
+	installedVersion := config.InstalledVersion.ValueString()
+	if installedVersion == "" {
+		installedVersion = os.Getenv("CASDOOR_INSTALLED_VERSION")
+	}
+	if installedVersion == "" {
+		resp.Diagnostics.AddError(
+			"Missing Required Casdoor Version",
+			"The Casdoor server version must be explicitly configured via the 'installed_version' attribute or the CASDOOR_INSTALLED_VERSION environment variable.",
+		)
+		return
+	}
+
+	parsedVersion, err := version.NewVersion(installedVersion)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid Casdoor Version",
+			fmt.Sprintf("Failed to parse Casdoor version %q: %s", installedVersion, err),
+		)
+		return
+	}
+
+	minimumVersion, _ := version.NewVersion("3.0.0")
+	if parsedVersion.LessThan(minimumVersion) {
+		resp.Diagnostics.AddError(
+			"Unsupported Casdoor Version",
+			fmt.Sprintf("Unsupported version of Casdoor. Minimum supported version is %s. Running version is %s.", minimumVersion, installedVersion),
+		)
+		return
+	}
+
+	providerClient := &ProviderClient{
+		Client:  client,
+		Version: parsedVersion,
+	}
+
+	resp.DataSourceData = providerClient
+	resp.ResourceData = providerClient
 }
 
 // appCredentials holds the OAuth credentials fetched via login.

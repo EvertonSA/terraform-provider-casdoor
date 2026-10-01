@@ -4,11 +4,91 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// ProviderClient holds the Casdoor SDK client and the configured server version.
+type ProviderClient struct {
+	Client  *casdoorsdk.Client
+	Version *version.Version
+}
+
+// casdoorV4Version is the minimum semver version for Casdoor 4.x.
+var casdoorV4Version = version.Must(version.NewVersion("4.0.0"))
+
+// IsV4OrGreater reports whether the Casdoor server version is 4.0.0 or higher.
+func (c *ProviderClient) IsV4OrGreater() bool {
+	if c == nil || c.Version == nil {
+		return false
+	}
+	return c.Version.GreaterThanOrEqual(casdoorV4Version)
+}
+
+// getProviderClient extracts *casdoorsdk.Client and *version.Version from req.ProviderData.
+func getProviderClient(providerData any, diags *diag.Diagnostics) (*casdoorsdk.Client, *version.Version, bool) {
+	if providerData == nil {
+		return nil, nil, false
+	}
+
+	switch c := providerData.(type) {
+	case *ProviderClient:
+		return c.Client, c.Version, true
+	case *casdoorsdk.Client:
+		return c, nil, true
+	default:
+		diags.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected *ProviderClient or *casdoorsdk.Client, got: %T. Please report this issue to the provider developers.", providerData),
+		)
+		return nil, nil, false
+	}
+}
+
+// updateWithServerMerge fetches the existing server object, overlays the plan object and any extra fields,
+// then posts the update. This prevents unmodeled server fields from being wiped out on Casdoor 4.x.
+func updateWithServerMerge(
+	client *casdoorsdk.Client,
+	getAction string,
+	updateAction string,
+	id string,
+	planObj any,
+	extraFields map[string]any,
+) (*casdoorsdk.Response, error) {
+	serverObj := make(map[string]any)
+	rawUrl := client.GetUrl(getAction, map[string]string{"id": id})
+	if rawBytes, err := client.DoGetBytes(rawUrl); err == nil && len(rawBytes) > 0 {
+		_ = json.Unmarshal(rawBytes, &serverObj)
+	}
+
+	planBytes, err := json.Marshal(planObj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal plan object: %w", err)
+	}
+	var planMap map[string]any
+	if err := json.Unmarshal(planBytes, &planMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal plan map: %w", err)
+	}
+
+	for k, v := range planMap {
+		serverObj[k] = v
+	}
+	for k, v := range extraFields {
+		serverObj[k] = v
+	}
+
+	mergedBytes, err := json.Marshal(serverObj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal merged payload: %w", err)
+	}
+
+	return client.DoPost(updateAction, map[string]string{"id": id}, mergedBytes, false, false)
+}
 
 // sdkError checks the (bool, error) result from Casdoor SDK calls and adds
 // appropriate diagnostics. Returns true if an error was recorded (caller

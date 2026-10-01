@@ -170,16 +170,8 @@ func (r *LdapResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 }
 
 func (r *LdapResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	client, ok := req.ProviderData.(*casdoorsdk.Client)
+	client, _, ok := getProviderClient(req.ProviderData, &resp.Diagnostics)
 	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected *casdoorsdk.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
-		)
 		return
 	}
 

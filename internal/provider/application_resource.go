@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -33,7 +34,12 @@ var (
 
 // ApplicationResource defines the resource implementation.
 type ApplicationResource struct {
-	client *casdoorsdk.Client
+	client  *casdoorsdk.Client
+	version *version.Version
+}
+
+func (r *ApplicationResource) isV4() bool {
+	return r.version != nil && r.version.GreaterThanOrEqual(casdoorV4Version)
 }
 
 // ProviderItemModel represents a provider item configuration.
@@ -1064,12 +1070,13 @@ func (r *ApplicationResource) Schema(_ context.Context, _ resource.SchemaRequest
 }
 
 func (r *ApplicationResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	client, _, ok := getProviderClient(req.ProviderData, &resp.Diagnostics)
+	client, ver, ok := getProviderClient(req.ProviderData, &resp.Diagnostics)
 	if !ok {
 		return
 	}
 
 	r.client = client
+	r.version = ver
 }
 
 // applicationPlanToSDK converts an ApplicationResourceModel into a casdoorsdk.Application.
@@ -1964,16 +1971,41 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 		return
 	}
 
-	ok, err := r.client.UpdateApplication(app)
-	if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("updating application %q", plan.Name.ValueString())) {
-		return
-	}
+	if r.isV4() {
+		appId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
+		postResp, err := updateWithServerMerge(r.client, "get-application", "update-application", appId, app, nil)
+		if err != nil || (postResp != nil && postResp.Status != "ok") {
+			msg := "unknown error"
+			if err != nil {
+				msg = err.Error()
+			} else if postResp != nil && postResp.Msg != "" {
+				msg = postResp.Msg
+			}
+			resp.Diagnostics.AddError("Error Updating Application", fmt.Sprintf("Could not update application %q: %s", plan.Name.ValueString(), msg))
+			return
+		}
 
-	// Keep computed values from state.
-	plan.CreatedTime = state.CreatedTime
-	plan.ClientID = state.ClientID
-	plan.ClientSecret = state.ClientSecret
-	plan.CertPublicKey = state.CertPublicKey
+		// Keep computed values from state or updated app.
+		plan.CreatedTime = state.CreatedTime
+		plan.ClientID = state.ClientID
+		plan.ClientSecret = state.ClientSecret
+		if updatedApp, err := r.client.GetApplication(plan.Name.ValueString()); err == nil && updatedApp != nil && updatedApp.CertPublicKey != "" {
+			plan.CertPublicKey = types.StringValue(updatedApp.CertPublicKey)
+		} else {
+			plan.CertPublicKey = state.CertPublicKey
+		}
+	} else {
+		ok, err := r.client.UpdateApplication(app)
+		if sdkError(&resp.Diagnostics, ok, err, fmt.Sprintf("updating application %q", plan.Name.ValueString())) {
+			return
+		}
+
+		// Keep computed values from state.
+		plan.CreatedTime = state.CreatedTime
+		plan.ClientID = state.ClientID
+		plan.ClientSecret = state.ClientSecret
+		plan.CertPublicKey = state.CertPublicKey
+	}
 
 	// Set list values to null if empty to match plan.
 	if len(app.RedirectUris) == 0 {

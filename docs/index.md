@@ -6,16 +6,15 @@ description: |-
   Compatibility
   | Provider | Casdoor server | Tested against |
   | --- | --- | --- |
+  | >= v0.2.0 | >= 3.0.0, 4.x | 3.0.0, 3.153.0, and 4.12.0 |
   | >= v0.1.0 | >= 3.0.0 | 3.0.0 and 3.153.0 |
   | <= v0.0.13 | pre-3.x schema | — |
-  Casdoor 3.0.0 changed several object schemas. This provider targets the 3.x
-  schema: attributes that earlier releases exposed but that no longer exist
-  upstream — such as casdoor_adapter.table_name_prefix and
-  casdoor_user.access_key — have been removed, so upgrading is a breaking
-  change for configurations that set them.
-  The acceptance suite runs as a CI matrix against both the lowest and highest
-  supported server versions, so the range above is verified at its boundaries.
-  Versions between them are expected to work but are not individually exercised.
+  The provider supports both Casdoor 3.x and Casdoor 4.x. Configure installed_version (or set the CASDOOR_INSTALLED_VERSION environment variable) to declare the target server version.
+  Casdoor 3.0.0 changed several object schemas. This provider targets 3.x and 4.x:
+  attributes that earlier releases exposed but that no longer exist upstream —
+  such as casdoor_adapter.table_name_prefix and casdoor_user.access_key —
+  have been removed.
+  The acceptance suite runs against supported server versions (including 3.x and 4.x).
   Authentication
   The provider supports two authentication methods:
   1. OAuth Application Credentials (recommended for production)
@@ -27,6 +26,7 @@ description: |-
     certificate       = file("path/to/cert.pem")
     organization_name = "built-in"
     application_name  = "app-built-in"
+    installed_version = "4.12.0"
   }
   
   2. Admin Username/Password (convenient for development)
@@ -37,6 +37,7 @@ description: |-
     application_name  = "app-built-in"
     username          = "admin"
     password          = var.casdoor_admin_password
+    installed_version = "4.12.0"
   }
   
   When using username/password, the provider will login and automatically fetch the application's OAuth credentials.
@@ -56,18 +57,18 @@ The Casdoor provider allows you to manage Casdoor resources.
 
 | Provider | Casdoor server | Tested against |
 | --- | --- | --- |
+| >= v0.2.0 | >= 3.0.0, 4.x | 3.0.0, 3.153.0, and 4.12.0 |
 | >= v0.1.0 | >= 3.0.0 | 3.0.0 and 3.153.0 |
 | <= v0.0.13 | pre-3.x schema | — |
 
-Casdoor 3.0.0 changed several object schemas. This provider targets the 3.x
-schema: attributes that earlier releases exposed but that no longer exist
-upstream — such as `casdoor_adapter.table_name_prefix` and
-`casdoor_user.access_key` — have been removed, so upgrading is a breaking
-change for configurations that set them.
+The provider supports both Casdoor 3.x and Casdoor 4.x. Configure `installed_version` (or set the `CASDOOR_INSTALLED_VERSION` environment variable) to declare the target server version.
 
-The acceptance suite runs as a CI matrix against both the lowest and highest
-supported server versions, so the range above is verified at its boundaries.
-Versions between them are expected to work but are not individually exercised.
+Casdoor 3.0.0 changed several object schemas. This provider targets 3.x and 4.x:
+attributes that earlier releases exposed but that no longer exist upstream —
+such as `casdoor_adapter.table_name_prefix` and `casdoor_user.access_key` —
+have been removed.
+
+The acceptance suite runs against supported server versions (including 3.x and 4.x).
 
 ## Authentication
 
@@ -83,6 +84,7 @@ provider "casdoor" {
   certificate       = file("path/to/cert.pem")
   organization_name = "built-in"
   application_name  = "app-built-in"
+  installed_version = "4.12.0"
 }
 ```
 
@@ -95,6 +97,7 @@ provider "casdoor" {
   application_name  = "app-built-in"
   username          = "admin"
   password          = var.casdoor_admin_password
+  installed_version = "4.12.0"
 }
 ```
 
@@ -153,5 +156,6 @@ provider "casdoor" {
 - `certificate` (String) The X.509 certificate (public key) for JWT verification. Required if username is not set.
 - `client_id` (String) The OAuth2 client ID for the Casdoor application. Required if username is not set.
 - `client_secret` (String, Sensitive) The OAuth2 client secret for the Casdoor application. Required if username is not set.
+- `installed_version` (String) The installed version of the Casdoor server (e.g. 4.12.0). Can also be set via the CASDOOR_INSTALLED_VERSION environment variable.
 - `password` (String, Sensitive) Admin password for authentication. Required if username is set.
 - `username` (String) Admin username for authentication. If set, the provider will login and fetch OAuth credentials automatically.

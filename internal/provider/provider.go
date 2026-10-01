@@ -61,18 +61,18 @@ func (p *CasdoorProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 
 | Provider | Casdoor server | Tested against |
 | --- | --- | --- |
+| >= v0.2.0 | >= 3.0.0, 4.x | 3.0.0, 3.153.0, and 4.12.0 |
 | >= v0.1.0 | >= 3.0.0 | 3.0.0 and 3.153.0 |
 | <= v0.0.13 | pre-3.x schema | — |
 
-Casdoor 3.0.0 changed several object schemas. This provider targets the 3.x
-schema: attributes that earlier releases exposed but that no longer exist
-upstream — such as ` + "`casdoor_adapter.table_name_prefix`" + ` and
-` + "`casdoor_user.access_key`" + ` — have been removed, so upgrading is a breaking
-change for configurations that set them.
+The provider supports both Casdoor 3.x and Casdoor 4.x. Configure ` + "`installed_version`" + ` (or set the ` + "`CASDOOR_INSTALLED_VERSION`" + ` environment variable) to declare the target server version.
 
-The acceptance suite runs as a CI matrix against both the lowest and highest
-supported server versions, so the range above is verified at its boundaries.
-Versions between them are expected to work but are not individually exercised.
+Casdoor 3.0.0 changed several object schemas. This provider targets 3.x and 4.x:
+attributes that earlier releases exposed but that no longer exist upstream —
+such as ` + "`casdoor_adapter.table_name_prefix`" + ` and ` + "`casdoor_user.access_key`" + ` —
+have been removed.
+
+The acceptance suite runs against supported server versions (including 3.x and 4.x).
 
 ## Authentication
 
@@ -88,6 +88,7 @@ provider "casdoor" {
   certificate       = file("path/to/cert.pem")
   organization_name = "built-in"
   application_name  = "app-built-in"
+  installed_version = "4.12.0"
 }
 ` + "```" + `
 
@@ -100,6 +101,7 @@ provider "casdoor" {
   application_name  = "app-built-in"
   username          = "admin"
   password          = var.casdoor_admin_password
+  installed_version = "4.12.0"
 }
 ` + "```" + `
 

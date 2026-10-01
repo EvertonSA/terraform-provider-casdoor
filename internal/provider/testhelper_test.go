@@ -78,6 +78,7 @@ type CasdoorTestConfig struct {
 	Certificate      string
 	OrganizationName string
 	ApplicationName  string
+	InstalledVersion string
 }
 
 // TestEnv holds the test environment including optional container.
@@ -175,6 +176,12 @@ func setupLocalContainer(ctx context.Context, t *testing.T) *TestEnv {
 		_ = container.Terminate(ctx)
 		t.Fatalf("Failed to fetch config via API: %v", err)
 	}
+
+	installedVer := "4.12.0"
+	if parts := strings.Split(image, ":"); len(parts) > 1 && parts[1] != "latest" {
+		installedVer = strings.TrimPrefix(parts[1], "v")
+	}
+	config.InstalledVersion = installedVer
 
 	t.Logf("Using local container at %s", endpoint)
 
@@ -299,6 +306,7 @@ func getDemoConfig() CasdoorTestConfig {
 		Certificate:      testJwtPublicKey,
 		OrganizationName: testCasdoorOrganization,
 		ApplicationName:  testCasdoorApplication,
+		InstalledVersion: "3.153.0",
 	}
 }
 
@@ -321,6 +329,10 @@ func testAccProtoV6ProviderFactories(_ CasdoorTestConfig) map[string]func() (tfp
 }
 
 func testAccProviderConfig(config CasdoorTestConfig) string {
+	versionAttr := ""
+	if config.InstalledVersion != "" {
+		versionAttr = fmt.Sprintf("  installed_version = %q\n", config.InstalledVersion)
+	}
 	return fmt.Sprintf(`
 provider "casdoor" {
   endpoint          = %q
@@ -329,6 +341,6 @@ provider "casdoor" {
   certificate       = %q
   organization_name = %q
   application_name  = %q
-}
-`, config.Endpoint, config.ClientID, config.ClientSecret, config.Certificate, config.OrganizationName, config.ApplicationName)
+%s}
+`, config.Endpoint, config.ClientID, config.ClientSecret, config.Certificate, config.OrganizationName, config.ApplicationName, versionAttr)
 }

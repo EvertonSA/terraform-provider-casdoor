@@ -16,12 +16,12 @@ func TestProviderClient_IsV4OrGreater(t *testing.T) {
 		version  string
 		expected bool
 	}{
-		{"v4.0.0", "4.0.0", true},
-		{"v4.12.0", "4.12.0", true},
-		{"v4.0.0 with prefix", "v4.0.0", true},
-		{"v3.153.0", "3.153.0", false},
-		{"v3.0.0", "3.0.0", false},
-		{"v3.0.0 with prefix", "v3.0.0", false},
+		{name: "v4.0.0", version: "4.0.0", expected: true},
+		{name: "v4.12.0", version: "4.12.0", expected: true},
+		{name: "v4.0.0 with prefix", version: "v4.0.0", expected: true},
+		{name: "v3.153.0", version: "3.153.0", expected: false},
+		{name: "v3.0.0", version: "3.0.0", expected: false},
+		{name: "v3.0.0 with prefix", version: "v3.0.0", expected: false},
 	}
 
 	for _, tt := range tests {
@@ -158,21 +158,19 @@ func TestApplicationResource_isV4(t *testing.T) {
 }
 
 func TestVersionParsingAndValidation(t *testing.T) {
-	minimumVersion, _ := version.NewVersion("3.0.0")
-
 	tests := []struct {
 		name          string
 		inputVersion  string
 		expectParseOk bool
 		isSupported   bool
 	}{
-		{"valid 4.12.0", "4.12.0", true, true},
-		{"valid 3.153.0", "3.153.0", true, true},
-		{"valid minimum 3.0.0", "3.0.0", true, true},
-		{"valid with v prefix", "v4.0.0", true, true},
-		{"unsupported old 2.9.0", "2.9.0", true, false},
-		{"unsupported old 1.0.0", "1.0.0", true, false},
-		{"invalid format", "not-a-version", false, false},
+		{name: "valid 4.12.0", inputVersion: "4.12.0", expectParseOk: true, isSupported: true},
+		{name: "valid 3.153.0", inputVersion: "3.153.0", expectParseOk: true, isSupported: true},
+		{name: "valid minimum 3.0.0", inputVersion: "3.0.0", expectParseOk: true, isSupported: true},
+		{name: "valid with v prefix", inputVersion: "v4.0.0", expectParseOk: true, isSupported: true},
+		{name: "unsupported old 2.9.0", inputVersion: "2.9.0", expectParseOk: true, isSupported: false},
+		{name: "unsupported old 1.0.0", inputVersion: "1.0.0", expectParseOk: true, isSupported: false},
+		{name: "invalid format", inputVersion: "not-a-version", expectParseOk: false, isSupported: false},
 	}
 
 	for _, tt := range tests {
@@ -188,7 +186,8 @@ func TestVersionParsingAndValidation(t *testing.T) {
 				return
 			}
 
-			supported := !v.LessThan(minimumVersion)
+			err = checkSupportedVersion(v)
+			supported := err == nil
 			if supported != tt.isSupported {
 				t.Errorf("version support for %q = %v, want %v", tt.inputVersion, supported, tt.isSupported)
 			}
@@ -199,7 +198,7 @@ func TestVersionParsingAndValidation(t *testing.T) {
 func TestResolveInstalledVersion(t *testing.T) {
 	t.Run("explicit in config takes precedence", func(t *testing.T) {
 		t.Setenv("CASDOOR_INSTALLED_VERSION", "3.153.0")
-		got, err := resolveInstalledVersion(types.StringValue("4.12.0"))
+		got, err := resolveInstalledVersion("4.12.0", false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -210,7 +209,7 @@ func TestResolveInstalledVersion(t *testing.T) {
 
 	t.Run("fallback to CASDOOR_INSTALLED_VERSION", func(t *testing.T) {
 		t.Setenv("CASDOOR_INSTALLED_VERSION", "4.12.0")
-		got, err := resolveInstalledVersion(types.StringNull())
+		got, err := resolveInstalledVersion("", false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -221,19 +220,22 @@ func TestResolveInstalledVersion(t *testing.T) {
 
 	t.Run("unknown config version returns error", func(t *testing.T) {
 		t.Setenv("CASDOOR_INSTALLED_VERSION", "4.12.0")
-		_, err := resolveInstalledVersion(types.StringUnknown())
+		_, err := resolveInstalledVersion("", true)
 		if err == nil {
 			t.Fatal("expected error when config version is unknown, got nil")
 		}
 	})
 
-	t.Run("missing both config and env returns error", func(t *testing.T) {
+	t.Run("falls back to the default", func(t *testing.T) {
 		t.Setenv("CASDOOR_INSTALLED_VERSION", "")
 		t.Setenv("INSTALLED_VERSION", "4.12.0") // Other env vars must NOT be used
 		t.Setenv("CASDOOR_VERSION", "4.12.0")   // Other env vars must NOT be used
-		_, err := resolveInstalledVersion(types.StringNull())
-		if err == nil {
-			t.Fatal("expected error when both config and CASDOOR_INSTALLED_VERSION are missing, got nil")
+		got, err := resolveInstalledVersion("", false)
+		if err != nil {
+			t.Fatalf("unexpected error when falling back to default: %v", err)
+		}
+		if got != "3.153.0" {
+			t.Errorf("got %q, want 3.153.0", got)
 		}
 	})
 }

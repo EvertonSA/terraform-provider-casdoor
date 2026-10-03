@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+FEATURES:
+
+* Casdoor 4.x support. Set `installed_version` (or `CASDOOR_INSTALLED_VERSION`) to a 4.x
+  version to manage the new `casdoor_organization` attributes (`password_history_count`,
+  `disable_console`, `enable_exclusive_signin`, `max_sessions`, `default_token_fields`).
+  On 4.x, updates merge the plan into the current server object, so fields the provider does
+  not model (e.g. application `client_cert`, `registration_access_token`, the Kerberos
+  keytab) and `"***"`-masked credentials are preserved instead of cleared.
+
+ENHANCEMENTS:
+
+* `installed_version` now defaults to `3.153.0` when neither the attribute nor
+  `CASDOOR_INSTALLED_VERSION` is set. Existing configurations keep working; set a 4.x version
+  to opt in to Casdoor 4.x attributes.
+* `casdoor_organization.password_salt` is now marked `Sensitive`.
+
+BUG FIXES:
+
+* A failed post-update read in `casdoor_organization` and `casdoor_application` now surfaces an
+  error instead of silently writing stale state.
+* Refused or no-op Casdoor writes (`data: "Unaffected"`) are reported as errors on the 4.x path,
+  matching the 3.x path.
+
 ## 0.1.0
 
 BREAKING CHANGES:

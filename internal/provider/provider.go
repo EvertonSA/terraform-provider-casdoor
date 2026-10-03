@@ -5,6 +5,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
@@ -156,7 +157,7 @@ See the [Casdoor Data Initialization docs](https://casdoor.org/docs/deployment/d
 				Sensitive:   true,
 			},
 			"installed_version": schema.StringAttribute{
-				Description: "The installed version of the Casdoor server (e.g. 4.12.0). Can also be set via the CASDOOR_INSTALLED_VERSION environment variable.",
+				Description: "The installed version of the Casdoor server (e.g. 4.12.0). Defaults to 3.153.0 when unset; set a 4.x version to enable Casdoor 4.x attributes. Can also be set via the CASDOOR_INSTALLED_VERSION environment variable.",
 				Optional:    true,
 			},
 		},
@@ -243,7 +244,7 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 		config.ApplicationName.ValueString(),
 	)
 
-	installedVersion, err := resolveInstalledVersion(config.InstalledVersion)
+	installedVersion, err := resolveInstalledVersion(config.InstalledVersion.ValueString(), config.InstalledVersion.IsUnknown())
 	if err != nil {
 		resp.Diagnostics.AddError("Missing Required Casdoor Version", err.Error())
 		return
@@ -258,12 +259,8 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	minimumVersion, _ := version.NewVersion("3.0.0")
-	if parsedVersion.LessThan(minimumVersion) {
-		resp.Diagnostics.AddError(
-			"Unsupported Casdoor Version",
-			fmt.Sprintf("Unsupported version of Casdoor. Minimum supported version is %s. Running version is %s.", minimumVersion, installedVersion),
-		)
+	if err := checkSupportedVersion(parsedVersion); err != nil {
+		resp.Diagnostics.AddError("Unsupported Casdoor Version", err.Error())
 		return
 	}
 
@@ -276,19 +273,36 @@ func (p *CasdoorProvider) Configure(ctx context.Context, req provider.ConfigureR
 	resp.ResourceData = providerClient
 }
 
-// resolveInstalledVersion returns the explicit version from config or CASDOOR_INSTALLED_VERSION env var.
-func resolveInstalledVersion(configVersion types.String) (string, error) {
-	if configVersion.IsUnknown() {
-		return "", fmt.Errorf("the Casdoor server version cannot be unknown at provider configuration time")
+// casdoorMinimumVersion is the oldest Casdoor server the provider supports.
+var casdoorMinimumVersion = version.Must(version.NewVersion("3.0.0"))
+
+// checkSupportedVersion rejects Casdoor servers older than the minimum
+// supported version.
+func checkSupportedVersion(v *version.Version) error {
+	if v.LessThan(casdoorMinimumVersion) {
+		return fmt.Errorf("unsupported version of Casdoor: minimum supported version is %s, running version is %s", casdoorMinimumVersion, v)
 	}
-	v := configVersion.ValueString()
-	if v == "" {
-		v = os.Getenv("CASDOOR_INSTALLED_VERSION")
+	return nil
+}
+
+// casdoorVersionDefault is used when neither the installed_version attribute nor
+// CASDOOR_INSTALLED_VERSION is set: the provider then speaks the Casdoor 3.x
+// schema, which 4.x servers still accept.
+const casdoorVersionDefault = "3.153.0"
+
+// resolveInstalledVersion returns the configured version, the value of the
+// CASDOOR_INSTALLED_VERSION environment variable, or the default.
+func resolveInstalledVersion(configured string, isUnknown bool) (string, error) {
+	if isUnknown {
+		return "", errors.New("the Casdoor server version cannot be unknown at provider configuration time")
 	}
-	if v == "" {
-		return "", fmt.Errorf("the Casdoor server version must be explicitly configured via the 'installed_version' attribute or the CASDOOR_INSTALLED_VERSION environment variable")
+	if configured != "" {
+		return configured, nil
 	}
-	return v, nil
+	if v := os.Getenv("CASDOOR_INSTALLED_VERSION"); v != "" {
+		return v, nil
+	}
+	return casdoorVersionDefault, nil
 }
 
 // appCredentials holds the OAuth credentials fetched via login.

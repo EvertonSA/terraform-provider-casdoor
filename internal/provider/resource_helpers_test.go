@@ -551,6 +551,97 @@ func TestPopulateV4FieldsFromMap(t *testing.T) {
 			t.Errorf("expected DefaultTokenFields untouched (['keep-me']), got %v", elements)
 		}
 	})
+
+	t.Run("in-memory types int64 and []string decode correctly (merged map path)", func(t *testing.T) {
+		model := &OrganizationResourceModel{}
+		var diags diag.Diagnostics
+		rawMap := map[string]any{
+			"passwordHistoryCount": int64(7),
+			"maxSessions":          int64(15),
+			"defaultTokenFields":   []string{"sub", "email"},
+		}
+		populateV4FieldsFromMap(ctx, rawMap, model, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		if model.PasswordHistoryCount.ValueInt64() != 7 {
+			t.Errorf("expected PasswordHistoryCount 7, got %v", model.PasswordHistoryCount)
+		}
+		if model.MaxSessions.ValueInt64() != 15 {
+			t.Errorf("expected MaxSessions 15, got %v", model.MaxSessions)
+		}
+		if model.DefaultTokenFields.IsNull() {
+			t.Fatal("expected DefaultTokenFields not null")
+		}
+		var elements []string
+		_ = model.DefaultTokenFields.ElementsAs(ctx, &elements, false)
+		if len(elements) != 2 || elements[0] != "sub" || elements[1] != "email" {
+			t.Errorf("expected ['sub', 'email'], got %v", elements)
+		}
+	})
+
+	t.Run("int and float64 numbers decode correctly", func(t *testing.T) {
+		model := &OrganizationResourceModel{}
+		var diags diag.Diagnostics
+		rawMap := map[string]any{
+			"passwordHistoryCount": int(3),
+			"maxSessions":          float64(8),
+		}
+		populateV4FieldsFromMap(ctx, rawMap, model, &diags)
+		if diags.HasError() {
+			t.Fatalf("unexpected diags: %v", diags)
+		}
+		if model.PasswordHistoryCount.ValueInt64() != 3 {
+			t.Errorf("expected PasswordHistoryCount 3, got %v", model.PasswordHistoryCount)
+		}
+		if model.MaxSessions.ValueInt64() != 8 {
+			t.Errorf("expected MaxSessions 8, got %v", model.MaxSessions)
+		}
+	})
+}
+
+func TestExtractV4OrganizationFields(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("omits unset/null defaultTokenFields", func(t *testing.T) {
+		plan := OrganizationResourceModel{
+			PasswordHistoryCount: types.Int64Value(5),
+			DefaultTokenFields:   types.ListNull(types.StringType),
+		}
+		extra := extractV4OrganizationFields(ctx, plan)
+		if _, present := extra["defaultTokenFields"]; present {
+			t.Errorf("expected defaultTokenFields omitted when null, got: %v", extra["defaultTokenFields"])
+		}
+		if extra["passwordHistoryCount"] != int64(5) {
+			t.Errorf("expected passwordHistoryCount 5, got: %v", extra["passwordHistoryCount"])
+		}
+	})
+
+	t.Run("omits unknown defaultTokenFields", func(t *testing.T) {
+		plan := OrganizationResourceModel{
+			DefaultTokenFields: types.ListUnknown(types.StringType),
+		}
+		extra := extractV4OrganizationFields(ctx, plan)
+		if _, present := extra["defaultTokenFields"]; present {
+			t.Errorf("expected defaultTokenFields omitted when unknown, got: %v", extra["defaultTokenFields"])
+		}
+	})
+
+	t.Run("includes set defaultTokenFields", func(t *testing.T) {
+		list, _ := types.ListValueFrom(ctx, types.StringType, []string{"name", "email"})
+		plan := OrganizationResourceModel{
+			DefaultTokenFields: list,
+		}
+		extra := extractV4OrganizationFields(ctx, plan)
+		val, present := extra["defaultTokenFields"]
+		if !present {
+			t.Fatal("expected defaultTokenFields present")
+		}
+		strSlice, ok := val.([]string)
+		if !ok || len(strSlice) != 2 || strSlice[0] != "name" || strSlice[1] != "email" {
+			t.Errorf("expected ['name', 'email'], got: %v", val)
+		}
+	})
 }
 
 func TestManagedKeysMatchSchemaAttributes(t *testing.T) {

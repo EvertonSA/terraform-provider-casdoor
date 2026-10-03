@@ -846,10 +846,8 @@ func (r *OrganizationResource) populateV4FieldsFromRaw(ctx context.Context, orgI
 // untouched, so no values are invented.
 func populateV4FieldsFromMap(ctx context.Context, rawMap map[string]any, model *OrganizationResourceModel, diags *diag.Diagnostics) {
 	if raw, present := rawMap["passwordHistoryCount"]; present {
-		if n, ok := raw.(json.Number); ok {
-			if v, err := n.Int64(); err == nil {
-				model.PasswordHistoryCount = types.Int64Value(v)
-			}
+		if v, ok := parseInt64FromRaw(raw); ok {
+			model.PasswordHistoryCount = types.Int64Value(v)
 		}
 	}
 	if raw, present := rawMap["disableConsole"]; present {
@@ -863,27 +861,44 @@ func populateV4FieldsFromMap(ctx context.Context, rawMap map[string]any, model *
 		}
 	}
 	if raw, present := rawMap["maxSessions"]; present {
-		if n, ok := raw.(json.Number); ok {
-			if v, err := n.Int64(); err == nil {
-				model.MaxSessions = types.Int64Value(v)
-			}
+		if v, ok := parseInt64FromRaw(raw); ok {
+			model.MaxSessions = types.Int64Value(v)
 		}
 	}
 	if raw, present := rawMap["defaultTokenFields"]; present {
-		list, ok := raw.([]any)
-		if !ok {
-			return
-		}
-		strList := make([]string, 0, len(list))
-		for _, item := range list {
-			if s, ok := item.(string); ok {
-				strList = append(strList, s)
+		switch list := raw.(type) {
+		case []any:
+			strList := make([]string, 0, len(list))
+			for _, item := range list {
+				if s, ok := item.(string); ok {
+					strList = append(strList, s)
+				}
 			}
+			var d diag.Diagnostics
+			model.DefaultTokenFields, d = stringListFromSDK(ctx, strList)
+			diags.Append(d...)
+		case []string:
+			var d diag.Diagnostics
+			model.DefaultTokenFields, d = stringListFromSDK(ctx, list)
+			diags.Append(d...)
 		}
-		var d diag.Diagnostics
-		model.DefaultTokenFields, d = stringListFromSDK(ctx, strList)
-		diags.Append(d...)
 	}
+}
+
+func parseInt64FromRaw(raw any) (int64, bool) {
+	switch v := raw.(type) {
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n, true
+		}
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	}
+	return 0, false
 }
 
 func extractV4OrganizationFields(ctx context.Context, plan OrganizationResourceModel) map[string]any {
@@ -904,8 +919,6 @@ func extractV4OrganizationFields(ctx context.Context, plan OrganizationResourceM
 		var tokenFields []string
 		_ = plan.DefaultTokenFields.ElementsAs(ctx, &tokenFields, false)
 		extraFields["defaultTokenFields"] = tokenFields
-	} else if plan.DefaultTokenFields.IsNull() {
-		extraFields["defaultTokenFields"] = []string{}
 	}
 	return extraFields
 }
@@ -958,41 +971,47 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
+	if createdOrg == nil {
+		resp.Diagnostics.AddError(
+			"Error Reading Organization",
+			fmt.Sprintf("Organization %q not found after creation", plan.Name.ValueString()),
+		)
+		return
+	}
+
 	// Populate from the server response, not the request: Casdoor fills in
 	// defaults (account items, languages, country codes, ...) on create.
-	if createdOrg != nil {
-		plan.CreatedTime = types.StringValue(createdOrg.CreatedTime)
-		plan.BalanceCurrency = types.StringValue(createdOrg.BalanceCurrency)
+	plan.CreatedTime = types.StringValue(createdOrg.CreatedTime)
+	plan.BalanceCurrency = types.StringValue(createdOrg.BalanceCurrency)
 
-		plan.PasswordOptions, diags = stringListFromSDK(ctx, createdOrg.PasswordOptions)
-		resp.Diagnostics.Append(diags...)
-		plan.CountryCodes, diags = stringListFromSDK(ctx, createdOrg.CountryCodes)
-		resp.Diagnostics.Append(diags...)
-		plan.UserTypes, diags = stringListFromSDK(ctx, createdOrg.UserTypes)
-		resp.Diagnostics.Append(diags...)
-		plan.Tags, diags = stringListFromSDK(ctx, createdOrg.Tags)
-		resp.Diagnostics.Append(diags...)
-		plan.Languages, diags = stringListFromSDK(ctx, createdOrg.Languages)
-		resp.Diagnostics.Append(diags...)
-		plan.NavItems, diags = stringListFromSDK(ctx, createdOrg.NavItems)
-		resp.Diagnostics.Append(diags...)
-		plan.UserNavItems, diags = stringListFromSDK(ctx, createdOrg.UserNavItems)
-		resp.Diagnostics.Append(diags...)
-		plan.WidgetItems, diags = stringListFromSDK(ctx, createdOrg.WidgetItems)
-		resp.Diagnostics.Append(diags...)
-		plan.LdapAttributes, diags = stringListFromSDK(ctx, createdOrg.LdapAttributes)
-		resp.Diagnostics.Append(diags...)
-		if len(createdOrg.MfaItems) == 0 {
-			plan.MfaItems = types.ListNull(types.ObjectType{AttrTypes: MfaItemAttrTypes()})
-		}
-		plan.AccountItems, diags = accountItemsFromSDK(createdOrg.AccountItems)
-		resp.Diagnostics.Append(diags...)
-
-		plan.UsePermanentAvatar = types.BoolValue(createdOrg.UsePermanentAvatar)
-		plan.TokenRetentionDays = types.Int64Value(int64(createdOrg.TokenRetentionDays))
-		plan.RecordRetentionDays = types.Int64Value(int64(createdOrg.RecordRetentionDays))
-		plan.DefaultTokenFormat = types.StringValue(createdOrg.DefaultTokenFormat)
+	plan.PasswordOptions, diags = stringListFromSDK(ctx, createdOrg.PasswordOptions)
+	resp.Diagnostics.Append(diags...)
+	plan.CountryCodes, diags = stringListFromSDK(ctx, createdOrg.CountryCodes)
+	resp.Diagnostics.Append(diags...)
+	plan.UserTypes, diags = stringListFromSDK(ctx, createdOrg.UserTypes)
+	resp.Diagnostics.Append(diags...)
+	plan.Tags, diags = stringListFromSDK(ctx, createdOrg.Tags)
+	resp.Diagnostics.Append(diags...)
+	plan.Languages, diags = stringListFromSDK(ctx, createdOrg.Languages)
+	resp.Diagnostics.Append(diags...)
+	plan.NavItems, diags = stringListFromSDK(ctx, createdOrg.NavItems)
+	resp.Diagnostics.Append(diags...)
+	plan.UserNavItems, diags = stringListFromSDK(ctx, createdOrg.UserNavItems)
+	resp.Diagnostics.Append(diags...)
+	plan.WidgetItems, diags = stringListFromSDK(ctx, createdOrg.WidgetItems)
+	resp.Diagnostics.Append(diags...)
+	plan.LdapAttributes, diags = stringListFromSDK(ctx, createdOrg.LdapAttributes)
+	resp.Diagnostics.Append(diags...)
+	if len(createdOrg.MfaItems) == 0 {
+		plan.MfaItems = types.ListNull(types.ObjectType{AttrTypes: MfaItemAttrTypes()})
 	}
+	plan.AccountItems, diags = accountItemsFromSDK(createdOrg.AccountItems)
+	resp.Diagnostics.Append(diags...)
+
+	plan.UsePermanentAvatar = types.BoolValue(createdOrg.UsePermanentAvatar)
+	plan.TokenRetentionDays = types.Int64Value(int64(createdOrg.TokenRetentionDays))
+	plan.RecordRetentionDays = types.Int64Value(int64(createdOrg.RecordRetentionDays))
+	plan.DefaultTokenFormat = types.StringValue(createdOrg.DefaultTokenFormat)
 
 	if r.isV4() {
 		if plan.PasswordHistoryCount.IsUnknown() {

@@ -318,6 +318,10 @@ func fetchConfigViaAPI(endpoint, adminPassword string) (*CasdoorTestConfig, erro
 
 // getDemoConfig returns the configuration for the Casdoor demo server.
 func getDemoConfig() CasdoorTestConfig {
+	installedVer := "3.153.0"
+	if envVer := os.Getenv("CASDOOR_INSTALLED_VERSION"); envVer != "" {
+		installedVer = envVer
+	}
 	return CasdoorTestConfig{
 		Endpoint:         testCasdoorEndpoint,
 		ClientID:         testClientID,
@@ -325,7 +329,7 @@ func getDemoConfig() CasdoorTestConfig {
 		Certificate:      testJwtPublicKey,
 		OrganizationName: testCasdoorOrganization,
 		ApplicationName:  testCasdoorApplication,
-		InstalledVersion: "3.153.0",
+		InstalledVersion: installedVer,
 	}
 }
 

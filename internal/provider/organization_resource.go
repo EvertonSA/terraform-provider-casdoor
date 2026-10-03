@@ -15,8 +15,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/float64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -36,9 +38,7 @@ type OrganizationResource struct {
 	version *version.Version
 }
 
-func (r *OrganizationResource) isV4() bool {
-	return r.version != nil && r.version.GreaterThanOrEqual(casdoorV4Version)
-}
+func (r *OrganizationResource) isV4() bool { return isV4(r.version) }
 
 // AccountItemModel represents an account item configuration.
 type AccountItemModel struct {
@@ -185,6 +185,34 @@ type OrganizationResourceModel struct {
 	LdapAttributes         types.List    `tfsdk:"ldap_attributes"`
 }
 
+// organizationManagedKeys lists the Casdoor JSON keys Terraform manages for
+// organizations. Only these are overlaid onto the server object on update;
+// everything else is posted back verbatim. Keys the SDK struct does not model
+// ("id", the 4.x-only attributes) are harmless no-ops in the overlay; the 4.x
+// attributes travel via ExtraFields.
+var organizationManagedKeys = []string{
+	"id", "owner", "name", "createdTime", "displayName", "websiteUrl", "logo",
+	"logoDark", "favicon", "hasPrivilegeConsent", "passwordType", "passwordSalt",
+	"passwordOptions", "passwordObfuscatorType", "passwordObfuscatorKey",
+	"passwordExpireDays", "countryCodes", "defaultAvatar", "defaultApplication",
+	"userTypes", "tags", "languages", "themeData", "masterPassword",
+	"defaultPassword", "masterVerificationCode", "ipWhitelist", "initScore",
+	"enableSoftDeletion", "isProfilePublic", "useEmailAsUsername", "enableTour",
+	"disableSignin", "ipRestriction", "navItems", "userNavItems", "widgetItems",
+	"mfaItems", "mfaRememberInHours", "accountItems", "orgBalance", "userBalance",
+	"balanceCredit", "balanceCurrency", "accountMenu", "dcrPolicy",
+	"usePermanentAvatar", "passwordHistoryCount", "tokenRetentionDays",
+	"recordRetentionDays", "defaultTokenFormat", "defaultTokenFields",
+	"disableConsole", "enableExclusiveSignin", "maxSessions", "ldapAttributes",
+}
+
+// organizationProtectedKeys lists organization keys Casdoor masks with "***"
+// when set (GetMaskedOrganization): a console-set master password, default
+// password or master verification code must be sent back as the mask unless
+// the user actually configures a new value, otherwise the server clears the
+// stored credential.
+var organizationProtectedKeys = []string{"masterPassword", "defaultPassword", "masterVerificationCode"}
+
 func NewOrganizationResource() resource.Resource {
 	return &OrganizationResource{}
 }
@@ -271,6 +299,7 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				Description: "The salt used for password hashing.",
 				Optional:    true,
 				Computed:    true,
+				Sensitive:   true,
 				Default:     stringdefault.StaticString(""),
 			},
 			"password_options": schema.ListAttribute{
@@ -556,10 +585,12 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				Default:     booldefault.StaticBool(false),
 			},
 			"password_history_count": schema.Int64Attribute{
-				Description: "Number of previous passwords to remember to prevent reuse.",
+				Description: "Number of previous passwords to remember to prevent reuse. Requires Casdoor 4.x.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(0),
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 			"token_retention_days": schema.Int64Attribute{
 				Description: "Token retention days.",
@@ -580,7 +611,7 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				Default:     stringdefault.StaticString(""),
 			},
 			"default_token_fields": schema.ListAttribute{
-				Description: "Default token fields.",
+				Description: "Default token fields. Requires Casdoor 4.x.",
 				Optional:    true,
 				Computed:    true,
 				PlanModifiers: []planmodifier.List{
@@ -589,22 +620,28 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				ElementType: types.StringType,
 			},
 			"disable_console": schema.BoolAttribute{
-				Description: "Whether to disable console.",
+				Description: "Whether to disable console. Requires Casdoor 4.x.",
 				Optional:    true,
 				Computed:    true,
-				Default:     booldefault.StaticBool(false),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"enable_exclusive_signin": schema.BoolAttribute{
-				Description: "Whether to enable exclusive signin.",
+				Description: "Whether to enable exclusive signin. Requires Casdoor 4.x.",
 				Optional:    true,
 				Computed:    true,
-				Default:     booldefault.StaticBool(false),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"max_sessions": schema.Int64Attribute{
-				Description: "Maximum allowed sessions.",
+				Description: "Maximum allowed sessions. Requires Casdoor 4.x.",
 				Optional:    true,
 				Computed:    true,
-				Default:     int64default.StaticInt64(0),
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 			"ldap_attributes": schema.ListAttribute{
 				Description: "LDAP attributes.",
@@ -782,39 +819,61 @@ func (r *OrganizationResource) validateV4Attributes(plan OrganizationResourceMod
 	checkField("default_token_fields", !plan.DefaultTokenFields.IsNull() && len(plan.DefaultTokenFields.Elements()) > 0)
 }
 
-func (r *OrganizationResource) populateV4FieldsFromRaw(ctx context.Context, orgId string, model *OrganizationResourceModel, diags *diag.Diagnostics) {
-	rawUrl := r.client.GetUrl("get-organization", map[string]string{"id": orgId})
-	rawBytes, err := r.client.DoGetBytes(rawUrl)
-	if err != nil || len(rawBytes) == 0 {
+// populateV4FieldsFromRaw fetches the raw organization JSON and fills the
+// Casdoor 4.x attributes the SDK struct does not model. Used on Create, where
+// no server object exists in memory yet.
+func (r *OrganizationResource) populateV4FieldsFromRaw(ctx context.Context, orgID string, model *OrganizationResourceModel, diags *diag.Diagnostics) {
+	rawURL := r.client.GetUrl("get-organization", map[string]string{"id": orgID})
+	rawBytes, err := r.client.DoGetBytes(rawURL)
+	if err != nil {
+		diags.AddError("Error Reading Organization", fmt.Sprintf("could not read organization %q: %s", orgID, err))
 		return
 	}
-
+	if len(rawBytes) == 0 {
+		diags.AddError("Error Reading Organization", fmt.Sprintf("empty response reading organization %q", orgID))
+		return
+	}
 	var rawMap map[string]any
-	if err := json.Unmarshal(rawBytes, &rawMap); err != nil {
+	if err := decodeJSONNumber(rawBytes, &rawMap); err != nil {
+		diags.AddError("Error Decoding Organization", fmt.Sprintf("could not decode organization %q: %s", orgID, err))
 		return
 	}
+	populateV4FieldsFromMap(ctx, rawMap, model, diags)
+}
 
-	if v, ok := rawMap["passwordHistoryCount"].(float64); ok {
-		model.PasswordHistoryCount = types.Int64Value(int64(v))
-	} else {
-		model.PasswordHistoryCount = types.Int64Value(0)
+// populateV4FieldsFromMap fills the Casdoor 4.x attributes from a raw server
+// object. Keys that are absent or of an unexpected type leave the model
+// untouched, so no values are invented.
+func populateV4FieldsFromMap(ctx context.Context, rawMap map[string]any, model *OrganizationResourceModel, diags *diag.Diagnostics) {
+	if raw, present := rawMap["passwordHistoryCount"]; present {
+		if n, ok := raw.(json.Number); ok {
+			if v, err := n.Int64(); err == nil {
+				model.PasswordHistoryCount = types.Int64Value(v)
+			}
+		}
 	}
-	if v, ok := rawMap["disableConsole"].(bool); ok {
-		model.DisableConsole = types.BoolValue(v)
-	} else {
-		model.DisableConsole = types.BoolValue(false)
+	if raw, present := rawMap["disableConsole"]; present {
+		if v, ok := raw.(bool); ok {
+			model.DisableConsole = types.BoolValue(v)
+		}
 	}
-	if v, ok := rawMap["enableExclusiveSignin"].(bool); ok {
-		model.EnableExclusiveSignin = types.BoolValue(v)
-	} else {
-		model.EnableExclusiveSignin = types.BoolValue(false)
+	if raw, present := rawMap["enableExclusiveSignin"]; present {
+		if v, ok := raw.(bool); ok {
+			model.EnableExclusiveSignin = types.BoolValue(v)
+		}
 	}
-	if v, ok := rawMap["maxSessions"].(float64); ok {
-		model.MaxSessions = types.Int64Value(int64(v))
-	} else {
-		model.MaxSessions = types.Int64Value(0)
+	if raw, present := rawMap["maxSessions"]; present {
+		if n, ok := raw.(json.Number); ok {
+			if v, err := n.Int64(); err == nil {
+				model.MaxSessions = types.Int64Value(v)
+			}
+		}
 	}
-	if list, ok := rawMap["defaultTokenFields"].([]any); ok && len(list) > 0 {
+	if raw, present := rawMap["defaultTokenFields"]; present {
+		list, ok := raw.([]any)
+		if !ok {
+			return
+		}
 		strList := make([]string, 0, len(list))
 		for _, item := range list {
 			if s, ok := item.(string); ok {
@@ -824,8 +883,6 @@ func (r *OrganizationResource) populateV4FieldsFromRaw(ctx context.Context, orgI
 		var d diag.Diagnostics
 		model.DefaultTokenFields, d = stringListFromSDK(ctx, strList)
 		diags.Append(d...)
-	} else {
-		model.DefaultTokenFields = types.ListNull(types.StringType)
 	}
 }
 
@@ -877,10 +934,10 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	orgId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
+	orgID := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
 	if r.isV4() {
 		extraFields := extractV4OrganizationFields(ctx, plan)
-		if err := postWithExtraFields(r.client, "add-organization", orgId, org, extraFields); err != nil {
+		if err := postWithExtraFields(r.client, "add-organization", orgID, org, extraFields); err != nil {
 			resp.Diagnostics.AddError("Error Creating Organization", fmt.Sprintf("Could not create organization %q: %s", plan.Name.ValueString(), err))
 			return
 		}
@@ -892,7 +949,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	// Read back the organization to get server-generated values like CreatedTime.
-	createdOrg, err := r.client.GetOrganization(orgId)
+	createdOrg, err := r.client.GetOrganization(orgID)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Reading Organization",
@@ -938,7 +995,22 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	if r.isV4() {
-		r.populateV4FieldsFromRaw(ctx, plan.Owner.ValueString()+"/"+plan.Name.ValueString(), &plan, &resp.Diagnostics)
+		if plan.PasswordHistoryCount.IsUnknown() {
+			plan.PasswordHistoryCount = types.Int64Value(0)
+		}
+		if plan.DisableConsole.IsUnknown() {
+			plan.DisableConsole = types.BoolValue(false)
+		}
+		if plan.EnableExclusiveSignin.IsUnknown() {
+			plan.EnableExclusiveSignin = types.BoolValue(false)
+		}
+		if plan.MaxSessions.IsUnknown() {
+			plan.MaxSessions = types.Int64Value(0)
+		}
+		if plan.DefaultTokenFields.IsUnknown() {
+			plan.DefaultTokenFields = types.ListNull(types.StringType)
+		}
+		r.populateV4FieldsFromRaw(ctx, orgID, &plan, &resp.Diagnostics)
 	} else {
 		plan.PasswordHistoryCount = types.Int64Value(0)
 		plan.DisableConsole = types.BoolValue(false)
@@ -947,7 +1019,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		plan.DefaultTokenFields = types.ListNull(types.StringType)
 	}
 
-	plan.ID = types.StringValue(plan.Owner.ValueString() + "/" + plan.Name.ValueString())
+	plan.ID = types.StringValue(orgID)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
@@ -960,16 +1032,23 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	org, err := r.client.GetOrganization(state.Owner.ValueString() + "/" + state.Name.ValueString())
+	orgID := state.Owner.ValueString() + "/" + state.Name.ValueString()
+	rawURL := r.client.GetUrl("get-organization", map[string]string{"id": orgID})
+	rawBytes, err := r.client.DoGetBytes(rawURL)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Reading Organization",
-			fmt.Sprintf("Could not read organization %q: %s", state.Name.ValueString(), err),
-		)
+		resp.Diagnostics.AddError("Error Reading Organization",
+			fmt.Sprintf("Could not read organization %q: %s", state.Name.ValueString(), err))
 		return
 	}
 
+	var org *casdoorsdk.Organization
+	if err := json.Unmarshal(rawBytes, &org); err != nil {
+		resp.Diagnostics.AddError("Error Reading Organization",
+			fmt.Sprintf("Could not decode organization %q: %s", state.Name.ValueString(), err))
+		return
+	}
 	if org == nil {
+		// data: null — the organization was deleted out of band.
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -1038,7 +1117,13 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 	state.DefaultTokenFormat = types.StringValue(org.DefaultTokenFormat)
 
 	if r.isV4() {
-		r.populateV4FieldsFromRaw(ctx, state.Owner.ValueString()+"/"+state.Name.ValueString(), &state, &resp.Diagnostics)
+		var rawMap map[string]any
+		if err := decodeJSONNumber(rawBytes, &rawMap); err != nil {
+			resp.Diagnostics.AddError("Error Decoding Organization",
+				fmt.Sprintf("Could not decode organization %q: %s", state.Name.ValueString(), err))
+			return
+		}
+		populateV4FieldsFromMap(ctx, rawMap, &state, &resp.Diagnostics)
 	} else {
 		state.PasswordHistoryCount = types.Int64Value(0)
 		state.DisableConsole = types.BoolValue(false)
@@ -1127,7 +1212,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	if r.isV4() {
-		orgId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
+		orgID := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
 
 		org, diags := organizationPlanToSDK(ctx, plan, plan.CreatedTime.ValueString())
 		resp.Diagnostics.Append(diags...)
@@ -1135,15 +1220,36 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 			return
 		}
 
-		extraFields := extractV4OrganizationFields(ctx, plan)
-		if err := updateWithServerMerge(r.client, "get-organization", "update-organization", orgId, org, extraFields); err != nil {
-			resp.Diagnostics.AddError("Error Updating Organization", fmt.Sprintf("Could not update organization %q: %s", plan.Name.ValueString(), err))
+		merged, err := updateWithServerMerge(r.client, serverMergeRequest{
+			GetAction:     "get-organization",
+			UpdateAction:  "update-organization",
+			ID:            orgID,
+			PlanObj:       org,
+			ExtraFields:   extractV4OrganizationFields(ctx, plan),
+			ManagedKeys:   organizationManagedKeys,
+			ProtectedKeys: organizationProtectedKeys,
+		})
+		if err != nil {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Error updating organization %q", plan.Name.ValueString()),
+				err.Error(),
+			)
 			return
 		}
 
-		updatedOrg, err := r.client.GetOrganization(orgId)
-		if err != nil || updatedOrg == nil {
-			resp.Diagnostics.AddError("Error Reading Organization After Update", fmt.Sprintf("Could not read organization %q: %v", plan.Name.ValueString(), err))
+		updatedOrg, err := r.client.GetOrganization(orgID)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Error updating organization %q", plan.Name.ValueString()),
+				fmt.Sprintf("Could not read organization after update: %s", err),
+			)
+			return
+		}
+		if updatedOrg == nil {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Error updating organization %q", plan.Name.ValueString()),
+				"Casdoor returned an empty response after the update",
+			)
 			return
 		}
 
@@ -1176,7 +1282,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		plan.RecordRetentionDays = types.Int64Value(int64(updatedOrg.RecordRetentionDays))
 		plan.DefaultTokenFormat = types.StringValue(updatedOrg.DefaultTokenFormat)
 
-		r.populateV4FieldsFromRaw(ctx, orgId, &plan, &resp.Diagnostics)
+		populateV4FieldsFromMap(ctx, merged, &plan, &resp.Diagnostics)
 	} else {
 		org, diags := organizationPlanToSDK(ctx, plan, plan.CreatedTime.ValueString())
 		resp.Diagnostics.Append(diags...)

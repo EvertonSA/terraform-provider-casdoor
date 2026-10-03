@@ -38,9 +38,7 @@ type ApplicationResource struct {
 	version *version.Version
 }
 
-func (r *ApplicationResource) isV4() bool {
-	return r.version != nil && r.version.GreaterThanOrEqual(casdoorV4Version)
-}
+func (r *ApplicationResource) isV4() bool { return isV4(r.version) }
 
 // ProviderItemModel represents a provider item configuration.
 type ProviderItemModel struct {
@@ -294,6 +292,35 @@ type ApplicationResourceModel struct {
 	UpstreamHost types.String `tfsdk:"upstream_host"`
 	SslMode      types.String `tfsdk:"ssl_mode"`
 	SslCert      types.String `tfsdk:"ssl_cert"`
+}
+
+// applicationProtectedKeys: Casdoor omits the client_secret column when the
+// incoming value is the "***" mask.
+var applicationProtectedKeys = []string{"clientSecret"}
+
+// applicationManagedKeys lists the Casdoor JSON keys Terraform manages for
+// applications. Only these are overlaid onto the server object on update;
+// everything else is posted back verbatim. Keys the SDK struct does not model
+// ("id") are harmless no-ops in the overlay.
+var applicationManagedKeys = []string{
+	"id", "owner", "name", "createdTime", "displayName", "category", "type",
+	"title", "favicon", "logo", "homepageUrl", "description", "organization",
+	"cert", "defaultGroup", "enablePassword", "enableSignUp", "enableSigninSession",
+	"enableAutoSignin", "enableCodeSignin", "enableExclusiveSignin",
+	"enableSamlCompress", "enableSamlC14n10", "enableSamlPostBinding",
+	"enableSamlAssertionSignature", "disableSamlAttributes", "useEmailAsSamlNameId",
+	"enableWebAuthn", "enableLinkWithEmail", "disableSignin", "isShared",
+	"clientId", "clientSecret", "redirectUris", "tokenFormat", "tokenSigningMethod",
+	"tokenFields", "tokenAttributes", "expireInHours", "refreshExpireInHours",
+	"cookieExpireInHours", "grantTypes", "samlReplyUrl", "samlHashAlgorithm",
+	"samlAttributes", "signupUrl", "signinUrl", "forgetUrl", "affiliationUrl",
+	"headerHtml", "footerHtml", "signupHtml", "signinHtml", "formCss",
+	"formCssMobile", "formOffset", "formSideHtml", "formBackgroundUrl",
+	"formBackgroundUrlMobile", "themeData", "ipRestriction", "ipWhitelist",
+	"failedSigninLimit", "failedSigninFrozenTime", "codeResendTimeout",
+	"orgChoiceMode", "termsOfUse", "tags", "certPublicKey", "forcedRedirectOrigin",
+	"order", "providers", "signinMethods", "signupItems", "signinItems",
+	"scopes", "domain", "otherDomains", "upstreamHost", "sslMode", "sslCert",
 }
 
 // NewApplicationResource creates a new Application resource.
@@ -1972,19 +1999,47 @@ func (r *ApplicationResource) Update(ctx context.Context, req resource.UpdateReq
 	}
 
 	if r.isV4() {
-		appId := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
-		if err := updateWithServerMerge(r.client, "get-application", "update-application", appId, app, nil); err != nil {
-			resp.Diagnostics.AddError("Error Updating Application", fmt.Sprintf("Could not update application %q: %s", plan.Name.ValueString(), err))
+		appID := plan.Owner.ValueString() + "/" + plan.Name.ValueString()
+		if _, err := updateWithServerMerge(r.client, serverMergeRequest{
+			GetAction:     "get-application",
+			UpdateAction:  "update-application",
+			ID:            appID,
+			PlanObj:       app,
+			ManagedKeys:   applicationManagedKeys,
+			ProtectedKeys: applicationProtectedKeys,
+		}); err != nil {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Error updating application %q", plan.Name.ValueString()),
+				err.Error(),
+			)
 			return
 		}
 
-		// Keep computed values from state or updated app.
+		// Keep computed values from state or the updated app.
 		plan.CreatedTime = state.CreatedTime
 		plan.ClientID = state.ClientID
 		plan.ClientSecret = state.ClientSecret
-		if updatedApp, err := r.client.GetApplication(appId); err == nil && updatedApp != nil && updatedApp.CertPublicKey != "" {
+
+		updatedApp, err := r.client.GetApplication(appID)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Error updating application %q", plan.Name.ValueString()),
+				fmt.Sprintf("Could not read application after update: %s", err),
+			)
+			return
+		}
+		if updatedApp == nil {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Error updating application %q", plan.Name.ValueString()),
+				"Casdoor returned an empty response after the update",
+			)
+			return
+		}
+		if updatedApp.CertPublicKey != "" {
 			plan.CertPublicKey = types.StringValue(updatedApp.CertPublicKey)
 		} else {
+			// Deliberate: the server may legitimately return an empty cert
+			// public key; keep the previous state value.
 			plan.CertPublicKey = state.CertPublicKey
 		}
 	} else {

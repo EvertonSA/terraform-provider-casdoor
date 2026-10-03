@@ -410,11 +410,11 @@ resource "casdoor_organization" "secure" {
 - `default_application` (String) The default application name for this organization.
 - `default_avatar` (String) The default avatar URL for users.
 - `default_password` (String, Sensitive) The default password for new users.
-- `default_token_fields` (List of String) Default token fields.
+- `default_token_fields` (List of String) Default token fields. Requires Casdoor 4.x.
 - `default_token_format` (String) Default token format (e.g. JWT).
-- `disable_console` (Boolean) Whether to disable console.
+- `disable_console` (Boolean) Whether to disable console. Requires Casdoor 4.x.
 - `disable_signin` (Boolean) Whether sign-in is disabled for the organization.
-- `enable_exclusive_signin` (Boolean) Whether to enable exclusive signin.
+- `enable_exclusive_signin` (Boolean) Whether to enable exclusive signin. Requires Casdoor 4.x.
 - `enable_soft_deletion` (Boolean) Whether soft deletion is enabled.
 - `enable_tour` (Boolean) Whether the tour guide is enabled.
 - `favicon` (String) The favicon URL of the organization.
@@ -429,18 +429,18 @@ resource "casdoor_organization" "secure" {
 - `logo_dark` (String) The dark mode logo URL of the organization.
 - `master_password` (String, Sensitive) The master password for the organization.
 - `master_verification_code` (String, Sensitive) The master verification code.
-- `max_sessions` (Number) Maximum allowed sessions.
+- `max_sessions` (Number) Maximum allowed sessions. Requires Casdoor 4.x.
 - `mfa_items` (Attributes List) List of MFA configurations. (see [below for nested schema](#nestedatt--mfa_items))
 - `mfa_remember_in_hours` (Number) Number of hours to remember MFA authentication.
 - `nav_items` (List of String) List of navigation items.
 - `org_balance` (Number) The organization balance.
 - `owner` (String) The owner of the organization. Defaults to 'admin'.
 - `password_expire_days` (Number) Number of days before password expires. 0 means no expiration.
-- `password_history_count` (Number) Number of previous passwords to remember to prevent reuse.
+- `password_history_count` (Number) Number of previous passwords to remember to prevent reuse. Requires Casdoor 4.x.
 - `password_obfuscator_key` (String, Sensitive) The password obfuscator key.
 - `password_obfuscator_type` (String) The password obfuscator type.
 - `password_options` (List of String) Password complexity options.
-- `password_salt` (String) The salt used for password hashing.
+- `password_salt` (String, Sensitive) The salt used for password hashing.
 - `password_type` (String) The password hashing algorithm. Valid values: plain, bcrypt, sha256-salt, md5-salt, etc.
 - `record_retention_days` (Number) Record retention days.
 - `tags` (List of String) Tags for the organization.

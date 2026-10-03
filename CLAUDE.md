@@ -10,8 +10,7 @@ OpenTofu/Terraform Provider for [Casdoor](https://casdoor.org), an Identity and 
 
 - **Language:** Go 1.25+
 - **Framework:** [Terraform Plugin Framework](https://github.com/hashicorp/terraform-plugin-framework) (NOT SDKv2)
-- **Client:** [Casdoor Go SDK](https://github.com/casdoor/casdoor-go-sdk) (uses
-  [my fork](https://github.com/prochac/casdoor-go-sdk) via `replace` in `go.mod`)
+- **Client:** [Casdoor Go SDK](https://github.com/casdoor/casdoor-go-sdk) (upstream v1.53.0; the fork was dropped in 0.1.0)
 - **Testing:** [Testcontainers for Go](https://github.com/testcontainers/testcontainers-go) (integration tests via Docker)
 
 ## Architectural Guidelines

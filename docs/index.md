@@ -156,6 +156,6 @@ provider "casdoor" {
 - `certificate` (String) The X.509 certificate (public key) for JWT verification. Required if username is not set.
 - `client_id` (String) The OAuth2 client ID for the Casdoor application. Required if username is not set.
 - `client_secret` (String, Sensitive) The OAuth2 client secret for the Casdoor application. Required if username is not set.
-- `installed_version` (String) The installed version of the Casdoor server (e.g. 4.12.0). Can also be set via the CASDOOR_INSTALLED_VERSION environment variable.
+- `installed_version` (String) The installed version of the Casdoor server (e.g. 4.12.0). Defaults to 3.153.0 when unset; set a 4.x version to enable Casdoor 4.x attributes. Can also be set via the CASDOOR_INSTALLED_VERSION environment variable.
 - `password` (String, Sensitive) Admin password for authentication. Required if username is set.
 - `username` (String) Admin username for authentication. If set, the provider will login and fetch OAuth credentials automatically.

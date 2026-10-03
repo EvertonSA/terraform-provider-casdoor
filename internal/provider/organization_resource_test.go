@@ -4,6 +4,7 @@ package provider
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
@@ -171,6 +172,9 @@ resource "casdoor_organization" "test" {
 
 func TestAccOrganizationResource_v4Attributes(t *testing.T) {
 	config := setupTestConfig(t)
+	if !strings.HasPrefix(config.InstalledVersion, "4.") {
+		t.Skipf("requires a Casdoor 4.x image, got %q", config.InstalledVersion)
+	}
 	rName := "tf-test-" + acctest.RandStringFromCharSet(8, acctest.CharSetAlphaNum)
 	resourceName := "casdoor_organization.test"
 

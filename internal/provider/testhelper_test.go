@@ -128,6 +128,24 @@ func casdoorImage() string {
 	return casdoorTestImage
 }
 
+// installedVersionFromImage derives the Casdoor version to declare to the
+// provider from a container image reference. It requires a version tag so the
+// suite never silently flips between the v3 and v4 code paths.
+func installedVersionFromImage(image string) (string, error) {
+	if strings.Contains(image, "@") {
+		return "", fmt.Errorf("image %q is digest-pinned; pin a version tag instead", image)
+	}
+	colon := strings.LastIndex(image, ":")
+	if colon == -1 || colon < strings.LastIndex(image, "/") {
+		return "", fmt.Errorf("image %q has no version tag; pin one (e.g. casbin/casdoor-all-in-one:3.153.0)", image)
+	}
+	tag := image[colon+1:]
+	if tag == "" || tag == "latest" {
+		return "", fmt.Errorf("image %q is not version-pinned; pin a version tag", image)
+	}
+	return strings.TrimPrefix(tag, "v"), nil
+}
+
 // setupLocalContainer starts a local Casdoor container and returns the test environment.
 func setupLocalContainer(ctx context.Context, t *testing.T) *TestEnv {
 	t.Helper()
@@ -177,9 +195,10 @@ func setupLocalContainer(ctx context.Context, t *testing.T) *TestEnv {
 		t.Fatalf("Failed to fetch config via API: %v", err)
 	}
 
-	installedVer := "4.12.0"
-	if parts := strings.Split(image, ":"); len(parts) > 1 && parts[1] != "latest" {
-		installedVer = strings.TrimPrefix(parts[1], "v")
+	installedVer, err := installedVersionFromImage(image)
+	if err != nil {
+		_ = container.Terminate(ctx)
+		t.Fatalf("Invalid CASDOOR_TEST_IMAGE: %v", err)
 	}
 	config.InstalledVersion = installedVer
 
@@ -343,4 +362,62 @@ provider "casdoor" {
   application_name  = %q
 %s}
 `, config.Endpoint, config.ClientID, config.ClientSecret, config.Certificate, config.OrganizationName, config.ApplicationName, versionAttr)
+}
+
+func TestInstalledVersionFromImage(t *testing.T) {
+	tests := []struct {
+		name      string
+		image     string
+		expected  string
+		expectErr bool
+	}{
+		{
+			name:     "standard image with version",
+			image:    "casbin/casdoor-all-in-one:3.153.0",
+			expected: "3.153.0",
+		},
+		{
+			name:     "registry with port and version",
+			image:    "localhost:5000/img:4.12.0",
+			expected: "4.12.0",
+		},
+		{
+			name:     "version with v prefix",
+			image:    "img:v4.0.0",
+			expected: "4.0.0",
+		},
+		{
+			name:      "no tag",
+			image:     "img",
+			expectErr: true,
+		},
+		{
+			name:      "latest tag",
+			image:     "img:latest",
+			expectErr: true,
+		},
+		{
+			name:      "digest pinned",
+			image:     "img@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := installedVersionFromImage(tt.image)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("installedVersionFromImage(%q) expected error, got nil", tt.image)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("installedVersionFromImage(%q) unexpected error: %v", tt.image, err)
+			}
+			if got != tt.expected {
+				t.Errorf("installedVersionFromImage(%q) = %q, want %q", tt.image, got, tt.expected)
+			}
+		})
+	}
 }

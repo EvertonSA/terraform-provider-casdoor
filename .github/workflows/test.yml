@@ -55,6 +55,7 @@ jobs:
         casdoor:
           - '3.0.0'
           - '3.153.0'
+          - '4.12.0'
     steps:
       - uses: actions/checkout@v6.0.2
 
